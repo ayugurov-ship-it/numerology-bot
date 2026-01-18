@@ -2,11 +2,10 @@ import os
 import json
 import time
 import requests
-import asyncio
 from pathlib import Path
-from threading import Thread
-from flask import Flask, request
+from flask import Flask, request, abort
 
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -48,7 +47,7 @@ def save_users(data):
 users = load_users()
 
 # =====================
-# AI (Groq)
+# AI
 # =====================
 
 def ask_groq(prompt, name):
@@ -83,7 +82,7 @@ def keyboard():
         keyboard=[
             [KeyboardButton(text="🔮 Моя дата рождения")],
             [KeyboardButton(text="💞 Совместимость")],
-            [KeyboardButton(text="ℹ️ Помощь")],
+            [KeyboardButton(text="ℹ️ Помощь")]
         ],
         resize_keyboard=True
     )
@@ -91,27 +90,27 @@ def keyboard():
 @dp.message(CommandStart())
 async def start(m: types.Message):
     await m.answer(
-        "Привет 👋\n\nВведи дату рождения в формате:\n\n📅 ДД.ММ.ГГГГ",
+        "Привет 👋\nВведи дату рождения в формате:\nДД.ММ.ГГГГ",
         reply_markup=keyboard()
     )
 
-@dp.message(lambda m: m.text == "ℹ️ Помощь")
-async def help_cmd(m: types.Message):
-    await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
-
-@dp.message(lambda m: "." in m.text and len(m.text) >= 8)
+@dp.message(lambda m: m.text and "." in m.text)
 async def numerology(m: types.Message):
     users[str(m.from_user.id)] = m.text
     save_users(users)
 
-    await m.answer("🔮 Считаю нумерологический разбор...")
+    await m.answer("🔮 Считаю твою нумерологию...")
 
     result = ask_groq(
-        f"Сделай подробный нумерологический разбор по дате {m.text}",
-        m.from_user.first_name or "друг"
+        f"Сделай подробный нумерологический разбор для даты {m.text}",
+        m.from_user.first_name
     )
 
     await m.answer(result)
+
+@dp.message()
+async def fallback(m: types.Message):
+    await m.answer("Напиши дату рождения в формате ДД.ММ.ГГГГ")
 
 # =====================
 # FLASK
@@ -121,7 +120,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "🟢 Bot is alive"
+    return "Bot is alive"
 
 @app.route("/ping")
 def ping():
@@ -129,21 +128,16 @@ def ping():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    update = types.Update(**request.json)
-    asyncio.run(dp.feed_update(bot, update))
+    if request.headers.get("content-type") != "application/json":
+        abort(403)
+
+    data = request.get_json()
+    update = types.Update(**data)
+
+    loop = asyncio.get_event_loop()
+    loop.create_task(dp.feed_update(bot, update))
+
     return "ok"
-
-# =====================
-# KEEP ALIVE
-# =====================
-
-def keep_alive():
-    while True:
-        try:
-            requests.get(BASE_URL + "/ping", timeout=10)
-        except:
-            pass
-        time.sleep(240)
 
 # =====================
 # WEBHOOK SETUP
@@ -152,18 +146,16 @@ def keep_alive():
 def set_webhook():
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
     r = requests.post(url, json={"url": WEBHOOK_URL})
-    print("Webhook:", r.text)
+    print("Webhook set:", r.text)
 
 # =====================
 # START
 # =====================
 
 if __name__ == "__main__":
-    Thread(target=keep_alive, daemon=True).start()
+    print("Starting bot...")
+
     set_webhook()
 
-    port = int(os.environ.get("PORT", 8080))
-    print("Running on port", port)
-    print("Webhook URL:", WEBHOOK_URL)
-
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
