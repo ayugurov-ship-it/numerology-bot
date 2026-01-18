@@ -24,7 +24,7 @@ SYSTEM_PROMPT = """
 Давай структурированные ответы с эмодзи.
 """
 
-BASE_URL = os.getenv("BASE_URL")  # Render даст домен
+BASE_URL = "https://numerology-bot-m48t.onrender.com"
 WEBHOOK_PATH = "/webhook"
 
 # =====================
