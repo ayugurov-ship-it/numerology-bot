@@ -1,4 +1,3 @@
-aiogram==3.4.1
 flask
+aiogram==3.*
 requests
-python-dotenv
