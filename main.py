@@ -52,7 +52,6 @@ users = load_users()
 
 def ask_groq(prompt, name):
     url = "https://api.groq.com/openai/v1/chat/completions"
-
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
@@ -110,7 +109,7 @@ async def numerology(m: types.Message):
 
 @dp.message()
 async def fallback(m: types.Message):
-    await m.answer("Напиши дату рождения в формате ДД.ММ.ГГГГ")
+    await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
 
 # =====================
 # FLASK
@@ -126,6 +125,10 @@ def home():
 def ping():
     return "pong"
 
+# создаём один event loop
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
     if request.headers.get("content-type") != "application/json":
@@ -134,7 +137,6 @@ def webhook():
     data = request.get_json()
     update = types.Update(**data)
 
-    loop = asyncio.get_event_loop()
     loop.create_task(dp.feed_update(bot, update))
 
     return "ok"
