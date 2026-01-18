@@ -1,11 +1,10 @@
 import os
 import json
-import time
 import requests
-from pathlib import Path
-from flask import Flask, request, abort
-
 import asyncio
+from pathlib import Path
+from flask import Flask, request
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -27,7 +26,6 @@ SYSTEM_PROMPT = """
 Ты профессиональный нумеролог и психолог.
 Пиши на русском языке.
 Обращайся к пользователю по имени.
-Давай структурированные ответы с эмодзи.
 """
 
 # =====================
@@ -38,11 +36,11 @@ USERS_FILE = Path("users.json")
 
 def load_users():
     if USERS_FILE.exists():
-        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        return json.loads(USERS_FILE.read_text())
     return {}
 
 def save_users(data):
-    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 users = load_users()
 
@@ -52,6 +50,7 @@ users = load_users()
 
 def ask_groq(prompt, name):
     url = "https://api.groq.com/openai/v1/chat/completions"
+
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
@@ -79,32 +78,22 @@ dp = Dispatcher()
 def keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔮 Моя дата рождения")],
+            [KeyboardButton(text="🌙 Гороскоп")],
             [KeyboardButton(text="💞 Совместимость")],
-            [KeyboardButton(text="ℹ️ Помощь")]
         ],
         resize_keyboard=True
     )
 
 @dp.message(CommandStart())
 async def start(m: types.Message):
-    await m.answer(
-        "Привет 👋\nВведи дату рождения в формате:\nДД.ММ.ГГГГ",
-        reply_markup=keyboard()
-    )
+    await m.answer("Привет 👋\nВведи дату рождения в формате ДД.ММ.ГГГГ", reply_markup=keyboard())
 
-@dp.message(lambda m: m.text and "." in m.text)
+@dp.message(lambda m: "." in m.text)
 async def numerology(m: types.Message):
     users[str(m.from_user.id)] = m.text
     save_users(users)
 
-    await m.answer("🔮 Считаю твою нумерологию...")
-
-    result = ask_groq(
-        f"Сделай подробный нумерологический разбор для даты {m.text}",
-        m.from_user.first_name
-    )
-
+    result = ask_groq(f"Сделай нумерологический разбор для даты {m.text}", m.from_user.first_name)
     await m.answer(result)
 
 @dp.message()
@@ -112,32 +101,31 @@ async def fallback(m: types.Message):
     await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
 
 # =====================
-# FLASK
+# FLASK + EVENT LOOP
 # =====================
 
 app = Flask(__name__)
 
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 @app.route("/")
 def home():
-    return "Bot is alive"
+    return "OK"
 
 @app.route("/ping")
 def ping():
     return "pong"
 
-# создаём один event loop
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
     if request.headers.get("content-type") != "application/json":
-        abort(403)
+        return "invalid", 403
 
     data = request.get_json()
     update = types.Update(**data)
 
-    loop.create_task(dp.feed_update(bot, update))
+    loop.call_soon_threadsafe(asyncio.create_task, dp.feed_update(bot, update))
 
     return "ok"
 
@@ -148,16 +136,17 @@ def webhook():
 def set_webhook():
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
     r = requests.post(url, json={"url": WEBHOOK_URL})
-    print("Webhook set:", r.text)
+    print("Webhook:", r.text)
 
 # =====================
 # START
 # =====================
 
 if __name__ == "__main__":
-    print("Starting bot...")
-
     set_webhook()
 
     port = int(os.environ.get("PORT", 10000))
+    print("Running on port", port)
+    print("Webhook URL:", WEBHOOK_URL)
+
     app.run(host="0.0.0.0", port=port)
