@@ -3,6 +3,8 @@ import json
 import asyncio
 import requests
 import aiohttp
+import logging
+logging.basicConfig(level=logging.INFO)
 from pathlib import Path
 from flask import Flask, request
 from threading import Thread
@@ -27,7 +29,7 @@ MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = BASE_URL + WEBHOOK_PATH
 
-SYSTEM_PROMPT = """
+GROQ_SYSTEM_PROMPT = """
 Ты — профессиональный нумеролог-консультант с 20-летним опытом.
 
 Твоя задача:
@@ -45,7 +47,7 @@ SYSTEM_PROMPT = """
 5. Зоны роста
 6. Совет на год
 
-Язык: русский.
+Язык: русский. Не упоминай, что ты ИИ.
 """
 
 # =====================
@@ -68,27 +70,32 @@ users = load_users()
 # GROK API
 # =====================
 
-async def ask_grok(prompt: str) -> str:
+async def ask_groq(prompt: str, name: str) -> str:
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
-        "Authorization": f"Bearer {GROK_API_KEY}",
+        "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    payload = {
-        "model": MODEL_NAME,
+    data = {
+        "model": "llama3-70b-8192",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": GROQ_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.7
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers, timeout=60) as r:
-            data = await r.json()
-            return data["choices"][0]["message"]["content"]
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=data, timeout=40) as resp:
+                result = await resp.json()
+                return result["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print("GROQ ERROR:", e)
+        return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
 
 # =====================
 # BOT INIT
@@ -145,8 +152,9 @@ async def numerology(m: Message):
 
     await m.answer("🔮 Анализирую дату...")
 
-    result = await ask_grok(f"Дата рождения: {m.text}")
-    await m.answer(result, reply_markup=main_menu())
+    prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
+    result = await ask_groq(prompt, m.from_user.first_name)
+await m.answer(result, reply_markup=main_menu())
 
 @router.message(lambda m: len(m.text.split()) == 2 and "." in m.text)
 async def compatibility(m: Message):
