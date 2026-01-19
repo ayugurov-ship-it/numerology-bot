@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 import threading
 from flask import Flask, request
@@ -7,57 +6,59 @@ from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
-# ========================
-# CONFIG
-# ========================
-
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "ВСТАВЬ_ТОКЕН"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = "https://numerology-bot-m48t.onrender.com"
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = BASE_URL + WEBHOOK_PATH
-
 PORT = int(os.getenv("PORT", 10000))
 
-# ========================
-# BOT INIT
-# ========================
+app = Flask(__name__)
 
-bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
+bot: Bot = None
+dp: Dispatcher = None
+loop: asyncio.AbstractEventLoop = None
 
-# ========================
-# HANDLERS
-# ========================
+# ======================
+# BOT SETUP
+# ======================
 
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer("Привет 👋\nВведи дату рождения в формате ДД.ММ.ГГГГ")
+async def setup_bot():
+    global bot, dp
 
-@dp.message(Command("help"))
-async def help_cmd(message: types.Message):
-    await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
+    bot = Bot(BOT_TOKEN)
+    dp = Dispatcher()
 
-@dp.message()
-async def fallback(message: types.Message):
-    await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
+    @dp.message(Command("start"))
+    async def start_cmd(message: types.Message):
+        await message.answer("Привет 👋\nВведи дату рождения в формате ДД.ММ.ГГГГ")
 
-# ========================
-# EVENT LOOP (GLOBAL)
-# ========================
+    @dp.message(Command("help"))
+    async def help_cmd(message: types.Message):
+        await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
 
-loop = asyncio.new_event_loop()
+    @dp.message()
+    async def fallback(message: types.Message):
+        await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
 
-def start_loop(loop):
+    await bot.set_webhook(WEBHOOK_URL)
+    print("Webhook set:", WEBHOOK_URL)
+
+# ======================
+# LOOP THREAD
+# ======================
+
+def run_loop():
+    global loop
+    loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    loop.run_until_complete(setup_bot())
     loop.run_forever()
 
-threading.Thread(target=start_loop, args=(loop,), daemon=True).start()
+threading.Thread(target=run_loop, daemon=True).start()
 
-# ========================
+# ======================
 # FLASK
-# ========================
-
-app = Flask(__name__)
+# ======================
 
 @app.route("/")
 def home():
@@ -69,28 +70,17 @@ def ping():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json(force=True)
-        update = types.Update(**data)
+    data = request.get_json(force=True)
+    update = types.Update(**data)
 
-        asyncio.run_coroutine_threadsafe(
-            dp.feed_update(bot, update),
-            loop
-        )
-
-    except Exception as e:
-        print("WEBHOOK ERROR:", e)
+    asyncio.run_coroutine_threadsafe(
+        dp.feed_update(bot, update),
+        loop
+    )
 
     return "ok"
 
-# ========================
-# STARTUP
-# ========================
-
-async def on_startup():
-    await bot.set_webhook(WEBHOOK_URL)
-    print("Webhook set:", WEBHOOK_URL)
+# ======================
 
 if __name__ == "__main__":
-    asyncio.run(on_startup())
     app.run(host="0.0.0.0", port=PORT)
