@@ -185,13 +185,6 @@ async def date_handler(m: Message):
 
     await m.answer(result, reply_markup=main_menu())
 
-
-        prompt = f"Сделай нумерологический прогноз на год для даты рождения {m.text}"
-
-        result = await ask_groq(prompt, m.from_user.first_name)
-
-        await m.answer(result, reply_markup=main_menu())
-
 # =====================
 # FLASK WEBHOOK SERVER
 # =====================
