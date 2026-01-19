@@ -22,7 +22,7 @@ from aiogram.types import (
 # =====================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROK_API_KEY = os.getenv("GROK_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 
 MODEL_NAME = "llama-3.1-8b-instant"
