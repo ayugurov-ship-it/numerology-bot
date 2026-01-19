@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import requests
+import aiohttp
 from pathlib import Path
 from flask import Flask, request
 from threading import Thread
@@ -9,10 +10,9 @@ from threading import Thread
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart
 from aiogram.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    Message,
-    CallbackQuery
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    Message
 )
 
 # =====================
@@ -104,13 +104,15 @@ dp.include_router(router)
 # =====================
 
 def main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧮 Расчет по дате", callback_data="calc")],
-        [InlineKeyboardButton(text="📊 Совместимость", callback_data="compat")],
-        [InlineKeyboardButton(text="🔮 Прогноз на год", callback_data="year")],
-        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
-    ])
-
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🧮 Расчет по дате")],
+            [KeyboardButton(text="📊 Совместимость")],
+            [KeyboardButton(text="🔮 Прогноз на год")],
+            [KeyboardButton(text="ℹ️ Помощь")]
+        ],
+        resize_keyboard=True
+    )
 # =====================
 # HANDLERS
 # =====================
@@ -122,19 +124,21 @@ async def start(m: Message):
         reply_markup=main_menu()
     )
 
-@router.callback_query()
-async def callbacks(c: CallbackQuery):
-    if c.data == "calc":
-        await c.message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
-    elif c.data == "compat":
-        await c.message.answer("Введите две даты через пробел\nПример: 12.03.1995 10.05.1993")
-    elif c.data == "year":
-        await c.message.answer("Введите дату рождения для прогноза на год")
-    elif c.data == "help":
-        await c.message.answer("Я рассчитываю нумерологию, совместимость и прогнозы 🔮")
-    await c.answer()
+@router.message(lambda m: m.text in ["🧮 Расчет по дате", "📊 Совместимость", "🔮 Прогноз на год", "ℹ️ Помощь"])
+async def menu_handler(m: Message):
+    if m.text == "🧮 Расчет по дате":
+        await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
 
-@router.message(lambda m: len(m.text.split()) == 1 and "." in m.text)
+    elif m.text == "📊 Совместимость":
+        await m.answer("Введите две даты через пробел\nПример: 12.03.1995 10.05.1993")
+
+    elif m.text == "🔮 Прогноз на год":
+        await m.answer("Введите дату рождения для прогноза на год")
+
+    elif m.text == "ℹ️ Помощь":
+        await m.answer("Я рассчитываю нумерологию, совместимость и прогнозы 🔮")
+
+@router.message(lambda m: m.text.count(".") == 2 and len(m.text) == 10)
 async def numerology(m: Message):
     users[str(m.from_user.id)] = m.text
     save_users(users)
