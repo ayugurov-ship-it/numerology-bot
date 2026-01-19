@@ -146,9 +146,17 @@ async def menu_handler(m: Message):
         await m.answer("Я рассчитываю нумерологию, совместимость и прогнозы 🔮")
 
 @router.message(lambda m: m.text.count(".") == 2 and len(m.text) == 10)
-async def numerology(m: Message):
-    users[str(m.from_user.id)] = m.text
-    save_users(users)
+@dp.message()
+async def fallback(m: types.Message):
+
+    if is_date(m.text):
+        await m.answer("🔮 Анализирую дату...")
+
+        prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
+
+        result = await ask_groq(prompt, m.from_user.first_name)
+
+        return
 
     await m.answer("🔮 Анализирую дату...")
 
