@@ -120,7 +120,9 @@ def main_menu():
         ],
         resize_keyboard=True
     )
-    def is_date(text: str) -> bool:
+
+
+def is_date(text: str) -> bool:
     try:
         day, month, year = text.split(".")
         return len(day) == 2 and len(month) == 2 and len(year) == 4
@@ -152,17 +154,14 @@ async def menu_handler(m: Message):
     elif m.text == "ℹ️ Помощь":
         await m.answer("Я рассчитываю нумерологию, совместимость и прогнозы 🔮")
 
-@router.message(lambda m: m.text.count(".") == 2 and len(m.text) == 10)
-async def fallback(m: types.Message):
+@router.message(lambda m: is_date(m.text))
+async def date_handler(m: Message):
+    await m.answer("🔮 Анализирую дату...")
 
-    if is_date(m.text):
-        await m.answer("🔮 Анализирую дату...")
+    prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
+    result = await ask_groq(prompt, m.from_user.first_name)
 
-        prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
-
-        result = await ask_groq(prompt, m.from_user.first_name)
-
-        await m.answer(result, reply_markup=main_menu())
+    await m.answer(result, reply_markup=main_menu())
 
         return
         await m.answer("🔮 Анализирую дату...")
@@ -189,10 +188,6 @@ async def date_handler(m: Message):
 
     await m.answer(result, reply_markup=main_menu())
 
-@router.message(lambda m: is_date(m.text))
-async def year_forecast(m: Message):
-    if "прогноза" in m.reply_to_message.text.lower():
-        await m.answer("🔮 Строю прогноз на год...")
 
         prompt = f"Сделай нумерологический прогноз на год для даты рождения {m.text}"
 
