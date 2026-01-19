@@ -156,9 +156,10 @@ async def fallback(m: types.Message):
 
         result = await ask_groq(prompt, m.from_user.first_name)
 
-        return
+        await m.answer(result, reply_markup=main_menu())
 
-    await m.answer("🔮 Анализирую дату...")
+        return
+        await m.answer("🔮 Анализирую дату...")
 
     prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
     result = await ask_groq(prompt, m.from_user.first_name)
@@ -170,7 +171,7 @@ async def compatibility(m: Message):
     await m.answer("💞 Анализирую совместимость...")
 
     result = await ask_grok(f"Совместимость дат: {d1} и {d2}")
-    await m.answer(result, reply_markup=main_menu())
+ 
 
 # =====================
 # FLASK WEBHOOK SERVER
