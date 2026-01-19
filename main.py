@@ -234,8 +234,8 @@ if __name__ == "__main__":
     if not BOT_TOKEN:
         print("ERROR: BOT_TOKEN is not set!")
         exit(1)
-    if not GROK_API_KEY:
-        print("ERROR: GROK_API_KEY is not set!")
+    if not GROQ_API_KEY:
+        print("ERROR: GROQ_API_KEY is not set!")
         exit(1)
     if not BASE_URL:
         print("ERROR: BASE_URL is not set!")
