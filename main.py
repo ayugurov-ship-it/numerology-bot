@@ -163,7 +163,6 @@ async def fallback(m: types.Message):
 
     prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
     result = await ask_groq(prompt, m.from_user.first_name)
-await m.answer(result, reply_markup=main_menu())
 
 @router.message(lambda m: len(m.text.split()) == 2 and "." in m.text)
 async def compatibility(m: Message):
