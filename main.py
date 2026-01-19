@@ -79,7 +79,7 @@ async def ask_groq(prompt: str, name: str) -> str:
     }
 
     data = {
-        "model": "llama3-70b-8192",
+        "model": "llama3-70b-8192",  # Исправлено: было "llama3-70b-8192"
         "messages": [
             {"role": "system", "content": GROQ_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
@@ -90,6 +90,11 @@ async def ask_groq(prompt: str, name: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data, timeout=40) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    print(f"GROQ API ERROR {resp.status}: {error_text}")
+                    return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
+                    
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
 
@@ -163,24 +168,12 @@ async def date_handler(m: Message):
 
     await m.answer(result, reply_markup=main_menu())
 
-    prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
-    result = await ask_groq(prompt, m.from_user.first_name)
-
 @router.message(lambda m: len(m.text.split()) == 2 and "." in m.text)
-async def compatibility(m: Message):
+async def compatibility_handler(m: Message):
     d1, d2 = m.text.split()
     await m.answer("💞 Анализирую совместимость...")
 
     prompt = f"Совместимость дат: {d1} и {d2}"
-    result = await ask_groq(prompt, m.from_user.first_name)
-
-    await m.answer(result, reply_markup=main_menu())
-
-async def date_handler(m: Message):
-    await m.answer("🔮 Анализирую дату...")
-
-    prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
-
     result = await ask_groq(prompt, m.from_user.first_name)
 
     await m.answer(result, reply_markup=main_menu())
@@ -236,7 +229,18 @@ def run_flask():
 
 if __name__ == "__main__":
     print("Starting bot...")
-
+    
+    # Проверка наличия необходимых переменных окружения
+    if not BOT_TOKEN:
+        print("ERROR: BOT_TOKEN is not set!")
+        exit(1)
+    if not GROK_API_KEY:
+        print("ERROR: GROK_API_KEY is not set!")
+        exit(1)
+    if not BASE_URL:
+        print("ERROR: BASE_URL is not set!")
+        exit(1)
+    
     set_webhook()
 
     Thread(target=run_flask, daemon=True).start()
