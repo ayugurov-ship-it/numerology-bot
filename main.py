@@ -79,7 +79,7 @@ async def ask_groq(prompt: str, name: str) -> str:
     }
 
     data = {
-        "model": "llama3-70b-8192",  # Исправлено: было "llama3-70b-8192"
+        "model": "llama-3.1-8b-instant",  # Исправлено: было ""model": "llama-3.1-8b-instant"
         "messages": [
             {"role": "system", "content": GROQ_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
@@ -89,7 +89,7 @@ async def ask_groq(prompt: str, name: str) -> str:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=data, timeout=40) as resp:
+            async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     print(f"GROQ API ERROR {resp.status}: {error_text}")
@@ -127,10 +127,12 @@ def main_menu():
     )
 
 
+from datetime import datetime
+
 def is_date(text: str) -> bool:
     try:
-        day, month, year = text.split(".")
-        return len(day) == 2 and len(month) == 2 and len(year) == 4
+        datetime.strptime(text, "%d.%m.%Y")
+        return True
     except:
         return False
 
