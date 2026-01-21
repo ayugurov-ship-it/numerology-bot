@@ -7,12 +7,13 @@ import random
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import requests
-    from flask import Flask, request, render_template_string
+    from flask import Flask, request
     from aiogram import Bot, Dispatcher, Router, types
-    from aiogram.filters import CommandStart
+    from aiogram.filters import CommandStart, Command
     from aiogram.types import (
         ReplyKeyboardMarkup,
         KeyboardButton,
@@ -27,19 +28,27 @@ except ImportError as e:
     exit(1)
 
 # =====================
+# НАСТРОЙКА ЛОГИРОВАНИЯ
+# =====================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# =====================
 # CONFIG
 # =====================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = os.getenv("BASE_URL", "https://numerology-bot-m48t.onrender.com")
-ADMIN_IDS = [260219938]  # Ваш ID
+ADMIN_IDS = [260219938]
 
-MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = BASE_URL + WEBHOOK_PATH
 
-# Системные промпты для разных типов анализа
+# Системные промпты
 SYSTEM_PROMPTS = {
     "portrait": """Ты — профессиональный нумеролог с 20-летним опытом.
 Создай подробный нумерологический портрет по дате рождения.
@@ -88,7 +97,7 @@ SYSTEM_PROMPTS = {
 }
 
 # =====================
-# USERS STORAGE
+# ХРАНИЛИЩЕ ДАННЫХ
 # =====================
 
 USERS_FILE = Path("users.json")
@@ -140,15 +149,12 @@ users = load_users()
 stats = load_stats()
 
 # =====================
-# UNIQUE FEATURES
+# НУМЕРОЛОГИЧЕСКИЙ КАЛЬКУЛЯТОР
 # =====================
 
 class NumerologyCalculator:
-    """Калькулятор нумерологических чисел"""
-    
     @staticmethod
     def calculate_life_path(date_str: str) -> int:
-        """Расчет числа жизненного пути"""
         try:
             digits = date_str.replace('.', '')
             total = sum(int(d) for d in digits)
@@ -161,27 +167,7 @@ class NumerologyCalculator:
             return None
     
     @staticmethod
-    def get_compatibility_level(date1: str, date2: str) -> str:
-        """Оценка уровня совместимости"""
-        num1 = NumerologyCalculator.calculate_life_path(date1)
-        num2 = NumerologyCalculator.calculate_life_path(date2)
-        
-        if not num1 or not num2:
-            return "средняя"
-        
-        compatible_pairs = [(1, 9), (2, 6), (3, 5), (4, 8), (7, 7)]
-        pair = (min(num1, num2), max(num1, num2))
-        
-        if pair in compatible_pairs:
-            return "высокая"
-        elif abs(num1 - num2) <= 2:
-            return "хорошая"
-        else:
-            return "средняя"
-    
-    @staticmethod
     def generate_affirmation(date_str: str) -> str:
-        """Генерация персональной аффирмации"""
         life_number = NumerologyCalculator.calculate_life_path(date_str)
         
         affirmations = {
@@ -210,12 +196,10 @@ async def ask_groq(prompt: str, prompt_type: str = "portrait") -> str:
         return "⚠️ Сервис временно недоступен. Пожалуйста, попробуйте позже."
     
     url = "https://api.groq.com/openai/v1/chat/completions"
-
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
-
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [
@@ -223,40 +207,39 @@ async def ask_groq(prompt: str, prompt_type: str = "portrait") -> str:
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.7,
-        "max_tokens": 1000
+        "max_tokens": 800
     }
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.post(url, headers=headers, json=data, timeout=30) as resp:
                 if resp.status != 200:
-                    return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
-                    
+                    return "⚠️ Ошибка при обработке запроса."
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
-
     except Exception as e:
-        return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
+        logger.error(f"GROQ API error: {e}")
+        return "⚠️ Произошла ошибка. Попробуйте позже."
 
 # =====================
-# BOT INIT
+# ИНИЦИАЛИЗАЦИЯ БОТА
 # =====================
 
 try:
-    bot = Bot(BOT_TOKEN)
+    bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     router = Router()
     dp.include_router(router)
+    logger.info("✅ Бот инициализирован")
 except Exception as e:
-    print(f"❌ ERROR initializing bot: {e}")
+    logger.error(f"❌ Ошибка инициализации бота: {e}")
     exit(1)
 
 # =====================
-# BEAUTIFUL KEYBOARDS
+# КЛАВИАТУРЫ
 # =====================
 
 def main_menu(user_id: int = None):
-    """Главное меню с красивыми кнопками"""
     keyboard = [
         [KeyboardButton(text="✨ Нумеропортрет")],
         [KeyboardButton(text="💞 Совместимость")],
@@ -265,7 +248,6 @@ def main_menu(user_id: int = None):
         [KeyboardButton(text="🔄 Аффирмация")]
     ]
     
-    # Кнопка админа только для вас
     if user_id in ADMIN_IDS:
         keyboard.append([KeyboardButton(text="👑 Админ")])
     
@@ -277,212 +259,151 @@ def main_menu(user_id: int = None):
         input_field_placeholder="Выберите действие..."
     )
 
-def period_menu():
-    """Инлайн-меню для выбора периода"""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📅 На месяц", callback_data="period_month"),
-                InlineKeyboardButton(text="📆 На 3 месяца", callback_data="period_quarter")
-            ],
-            [
-                InlineKeyboardButton(text="🎯 На год", callback_data="period_year"),
-                InlineKeyboardButton(text="✨ На неделю", callback_data="period_week")
-            ]
-        ]
-    )
-
 def horoscope_menu():
-    """Инлайн-меню для гороскопа"""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🌞 Сегодня", callback_data="horoscope_today"),
-                InlineKeyboardButton(text="🌙 Завтра", callback_data="horoscope_tomorrow")
-            ],
-            [
-                InlineKeyboardButton(text="📅 На неделю", callback_data="horoscope_week"),
-                InlineKeyboardButton(text="📆 На месяц", callback_data="horoscope_month")
-            ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🌞 Сегодня", callback_data="horoscope_today"),
+            InlineKeyboardButton(text="🌙 Завтра", callback_data="horoscope_tomorrow")
+        ],
+        [
+            InlineKeyboardButton(text="📅 На неделю", callback_data="horoscope_week"),
+            InlineKeyboardButton(text="📆 На месяц", callback_data="horoscope_month")
         ]
-    )
+    ])
+
+def period_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📅 На месяц", callback_data="period_month"),
+            InlineKeyboardButton(text="📆 На 3 месяца", callback_data="period_quarter")
+        ],
+        [
+            InlineKeyboardButton(text="🎯 На год", callback_data="period_year"),
+            InlineKeyboardButton(text="✨ На неделю", callback_data="period_week")
+        ]
+    ])
 
 def compatibility_menu():
-    """Инлайн-меню для типа совместимости"""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="💑 Романтика", callback_data="comp_love"),
-                InlineKeyboardButton(text="💼 Бизнес", callback_data="comp_business")
-            ],
-            [
-                InlineKeyboardButton(text="👥 Дружба", callback_data="comp_friends"),
-                InlineKeyboardButton(text="👨‍👩‍👧‍👦 Семья", callback_data="comp_family")
-            ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💑 Романтика", callback_data="comp_love"),
+            InlineKeyboardButton(text="💼 Бизнес", callback_data="comp_business")
+        ],
+        [
+            InlineKeyboardButton(text="👥 Дружба", callback_data="comp_friends"),
+            InlineKeyboardButton(text="👨‍👩‍👧‍👦 Семья", callback_data="comp_family")
         ]
-    )
+    ])
 
 # =====================
-# HANDLERS
+# ОБРАБОТЧИКИ СООБЩЕНИЙ
 # =====================
 
 @router.message(CommandStart())
-async def start(m: Message):
-    user_id = m.from_user.id
+async def start_command(message: Message):
+    user_id = message.from_user.id
     
-    # Сохраняем пользователя
     if str(user_id) not in users:
         users[str(user_id)] = {
-            "username": m.from_user.username or "",
-            "first_name": m.from_user.first_name or "",
-            "last_name": m.from_user.last_name or "",
+            "username": message.from_user.username or "",
+            "first_name": message.from_user.first_name or "",
+            "last_name": message.from_user.last_name or "",
             "joined": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         save_users(users)
+        stats["total_users"] = len(users)
+        save_stats(stats)
     
-    stats["total_users"] = len(users)
-    save_stats(stats)
-    
-    # Персонализированное приветствие
     greetings = [
-        f"✨ Приветствую, {m.from_user.first_name or 'друг'}! Готовы раскрыть тайны чисел?",
-        f"🌟 Добро пожаловать, {m.from_user.first_name or 'путешественник'}! Числа ждут анализа.",
-        f"🔮 Здравствуйте, {m.from_user.first_name or 'искатель'}! Давайте исследуем вашу нумерологию."
+        f"✨ Приветствую, {message.from_user.first_name or 'друг'}! Готовы раскрыть тайны чисел?",
+        f"🌟 Добро пожаловать, {message.from_user.first_name or 'путешественник'}! Числа ждут анализа.",
+        f"🔮 Здравствуйте, {message.from_user.first_name or 'искатель'}! Давайте исследуем вашу нумерологию."
     ]
     
-    await m.answer(
+    await message.answer(
         random.choice(greetings) + "\n\nВыберите действие:",
         reply_markup=main_menu(user_id)
     )
-
-# =====================
-# MENU HANDLERS
-# =====================
+    logger.info(f"Пользователь {user_id} запустил бота")
 
 @router.message(lambda m: m.text == "✨ Нумеропортрет")
-async def portrait_handler(m: Message):
-    await m.answer(
+async def portrait_handler(message: Message):
+    await message.answer(
         "✨ *Нумерологический портрет*\n\n"
         "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
         "*Пример:* 15.05.1990\n\n"
-        "Я создам подробный анализ вашей личности на основе чисел:"
-        "\n• Число жизненного пути"
-        "\n• Число судьбы"
-        "\n• Сильные стороны"
-        "\n• Рекомендации для роста",
+        "Я создам подробный анализ вашей личности на основе чисел.",
         parse_mode="Markdown",
-        reply_markup=main_menu(m.from_user.id)
+        reply_markup=main_menu(message.from_user.id)
     )
 
 @router.message(lambda m: m.text == "💞 Совместимость")
-async def compatibility_handler(m: Message):
-    await m.answer(
+async def compatibility_handler(message: Message):
+    await message.answer(
         "💞 *Нумерологическая совместимость*\n\n"
         "Выберите тип отношений для анализа:",
         reply_markup=compatibility_menu()
     )
 
-@router.callback_query(lambda c: c.data.startswith("comp_"))
-async def process_compatibility_type(callback: types.CallbackQuery):
-    comp_type = callback.data.split("_")[1]
-    
-    type_names = {
-        "love": "романтических отношений 💑",
-        "business": "делового партнерства 💼", 
-        "friends": "дружбы 👥",
-        "family": "семейных отношений 👨‍👩‍👧‍👦"
-    }
-    
-    await callback.message.edit_text(
-        f"💞 *Совместимость для {type_names[comp_type]}*\n\n"
-        "Введите две даты рождения через пробел:\n\n"
-        "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
-        "*Пример:* 15.05.1990 20.08.1985\n\n"
-        "Я проанализирую энергетическую совместимость.",
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
 @router.message(lambda m: m.text == "🌟 Гороскоп дня")
-async def horoscope_handler(m: Message):
-    await m.answer(
+async def horoscope_handler(message: Message):
+    await message.answer(
         "🌟 *Персональный гороскоп*\n\n"
         "Выберите период для гороскопа:",
         reply_markup=horoscope_menu()
     )
 
-@router.callback_query(lambda c: c.data.startswith("horoscope_"))
-async def process_horoscope_period(callback: types.CallbackQuery):
-    period = callback.data.split("_")[1]
-    
-    period_names = {
-        "today": "сегодня 🌞",
-        "tomorrow": "завтра 🌙", 
-        "week": "неделю 📅",
-        "month": "месяц 📆"
-    }
-    
-    await callback.message.edit_text(
-        f"🌟 *Гороскоп на {period_names[period]}*\n\n"
-        "Введите вашу дату рождения:\n\n"
-        "*Формат:* ДД.ММ.ГГГГ\n"
-        "*Пример:* 15.05.1990\n\n"
-        "Я создам персонализированный нумерологический гороскоп.",
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
 @router.message(lambda m: m.text == "📅 Прогноз на период")
-async def forecast_handler(m: Message):
-    await m.answer(
+async def forecast_handler(message: Message):
+    await message.answer(
         "📅 *Нумерологический прогноз*\n\n"
         "Выберите период для прогноза:",
         reply_markup=period_menu()
     )
 
-@router.callback_query(lambda c: c.data.startswith("period_"))
-async def process_forecast_period(callback: types.CallbackQuery):
-    period = callback.data.split("_")[1]
-    
-    period_names = {
-        "week": "неделю ✨",
-        "month": "месяц 📅", 
-        "quarter": "3 месяца 📆",
-        "year": "год 🎯"
-    }
-    
-    await callback.message.edit_text(
-        f"📅 *Прогноз на {period_names[period]}*\n\n"
-        "Введите вашу дату рождения:\n\n"
-        "*Формат:* ДД.ММ.ГГГГ\n"
-        "*Пример:* 15.05.1990\n\n"
-        "Я сделаю нумерологический прогноз для выбранного периода.",
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
 @router.message(lambda m: m.text == "🔄 Аффирмация")
-async def affirmation_handler(m: Message):
-    await m.answer(
+async def affirmation_handler(message: Message):
+    await message.answer(
         "🔄 *Персональная аффирмация*\n\n"
         "Введите вашу дату рождения:\n\n"
         "*Формат:* ДД.ММ.ГГГГ\n"
         "*Пример:* 15.05.1990\n\n"
-        "Я создам для вас аффирмацию —\n"
-        "утверждение, которое поможет настроиться на удачный день.",
+        "Я создам для вас аффирмацию.",
         parse_mode="Markdown",
-        reply_markup=main_menu(m.from_user.id)
+        reply_markup=main_menu(message.from_user.id)
     )
 
+@router.message(lambda m: m.text == "ℹ️ Помощь")
+async def help_handler(message: Message):
+    help_text = f"""
+🌟 *Нумерологический бот с AI*
+
+✨ *Доступные функции:*
+1. ✨ Нумеропортрет — анализ личности
+2. 💞 Совместимость — анализ отношений  
+3. 🌟 Гороскоп дня — нумерологический гороскоп
+4. 📅 Прогноз на период — прогноз на период
+5. 🔄 Аффирмация — персональное утверждение
+
+📋 *Как пользоваться:*
+1. Выберите функцию в меню
+2. Следуйте инструкциям
+3. Получите анализ
+
+🔮 *Формат даты:* ДД.ММ.ГГГГ
+
+📊 *Статистика:* {stats['total_users']} пользователей уже доверили мне свои числа!
+"""
+    await message.answer(help_text, parse_mode="Markdown", reply_markup=main_menu(message.from_user.id))
+
 @router.message(lambda m: m.text == "👑 Админ")
-async def admin_handler(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        await m.answer("Эта функция доступна только администраторам")
+async def admin_handler(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Эта функция доступна только администраторам")
         return
     
     today = datetime.now().strftime("%Y-%m-%d")
-    
     admin_text = f"""
 👑 *Панель администратора*
 
@@ -495,173 +416,17 @@ async def admin_handler(m: Message):
 • Запросов сегодня: {stats['daily_stats'].get(today, 0)}
 
 🌐 Веб-админка: {BASE_URL}/admin
-
-🆔 Ваш ID: {m.from_user.id}
-
-*Последние 5 пользователей:*
+🆔 Ваш ID: {message.from_user.id}
 """
-    
-    # Показываем последних пользователей
-    user_items = list(users.items())[-5:]
-    for user_id, user_data in user_items:
-        admin_text += f"\n• {user_data.get('first_name', 'Неизвестно')} (@{user_data.get('username', 'нет')})"
-    
-    await m.answer(admin_text, parse_mode="Markdown", reply_markup=main_menu(m.from_user.id))
-
-@router.message(lambda m: m.text == "ℹ️ Помощь")
-async def help_handler(m: Message):
-    help_text = """
-🌟 *Нумерологический бот с AI*
-
-Я — ваш персональный нумеролог, использующий искусственный интеллект.
-
-✨ *Доступные функции:*
-
-1. *✨ Нумеропортрет* — глубокий анализ личности по дате рождения
-2. *💞 Совместимость* — анализ отношений для разных сфер жизни
-3. *🌟 Гороскоп дня* — нумерологический гороскоп на период
-4. *📅 Прогноз на период* — прогноз на неделю/месяц/год
-5. *🔄 Аффирмация* — персональное утверждение на день
-
-📋 *Как пользоваться:*
-1. Выберите функцию в меню
-2. Следуйте инструкциям бота
-3. Получите персонализированный анализ
-
-🔮 *Формат даты:* ДД.ММ.ГГГГ (например, 15.05.1990)
-💡 *Совет:* Чем точнее данные, тем точнее анализ!
-
-📊 *Статистика:* {} пользователей уже доверили мне свои числа!
-""".format(stats['total_users'])
-    
-    await m.answer(help_text, parse_mode="Markdown", reply_markup=main_menu(m.from_user.id))
+    await message.answer(admin_text, parse_mode="Markdown", reply_markup=main_menu(message.from_user.id))
 
 # =====================
-# ANALYSIS HANDLERS
-# =====================
-
-def is_date(text: str) -> bool:
-    try:
-        datetime.strptime(text, "%d.%m.%Y")
-        return True
-    except:
-        return False
-
-@router.message(lambda m: is_date(m.text))
-async def process_date(m: Message):
-    """Обработка даты рождения"""
-    user_id = m.from_user.id
-    date_str = m.text
-    
-    await m.answer("✨ Анализирую ваш нумерологический портрет...")
-    
-    # Обновляем статистику
-    stats["calculations"] = stats.get("calculations", 0) + 1
-    today = datetime.now().strftime("%Y-%m-%d")
-    if "daily_stats" not in stats:
-        stats["daily_stats"] = {}
-    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
-    save_stats(stats)
-    
-    # Получаем число жизненного пути
-    life_number = NumerologyCalculator.calculate_life_path(date_str)
-    
-    # Создаем промпт
-    prompt = f"""
-Создай подробный нумерологический портрет для человека, родившегося {date_str}.
-Число жизненного пути: {life_number if life_number else "не определено"}.
-
-Включи:
-1. Ключевые числа и их значения
-2. Основные черты характера
-3. Сильные стороны
-4. Зоны для развития
-5. Профессиональные рекомендации
-6. Советы по отношениям
-"""
-    
-    analysis = await ask_groq(prompt, "portrait")
-    
-    # Добавляем аффирмацию
-    affirmation = NumerologyCalculator.generate_affirmation(date_str)
-    
-    response = f"""
-✨ *Ваш нумерологический портрет* ✨
-
-*Дата рождения:* {date_str}
-*Число жизненного пути:* {life_number if life_number else "не определено"}
-
-{analysis}
-
-🔄 *Аффирмация дня:*
-{affirmation}
-"""
-    
-    await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-
-@router.message(lambda m: m.text and len(m.text.split()) == 2 and all(is_date(part) for part in m.text.split()[:2]))
-async def process_compatibility(m: Message):
-    """Обработка совместимости"""
-    user_id = m.from_user.id
-    parts = m.text.split()
-    date1, date2 = parts[0], parts[1]
-    
-    await m.answer("💞 Анализирую совместимость...")
-    
-    # Обновляем статистику
-    stats["compatibility_checks"] = stats.get("compatibility_checks", 0) + 1
-    today = datetime.now().strftime("%Y-%m-%d")
-    if "daily_stats" not in stats:
-        stats["daily_stats"] = {}
-    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
-    save_stats(stats)
-    
-    # Получаем уровень совместимости
-    compat_level = NumerologyCalculator.get_compatibility_level(date1, date2)
-    
-    # Создаем промпт
-    prompt = f"""
-Проанализируй нумерологическую совместимость двух людей:
-1. Дата рождения: {date1}
-2. Дата рождения: {date2}
-
-Уровень совместимости: {compat_level}
-
-Дайте подробный анализ:
-1. Общая оценка совместимости
-2. Сильные стороны пары
-3. Потенциальные вызовы
-4. Рекомендации для гармонии
-5. Совместные возможности
-"""
-    
-    analysis = await ask_groq(prompt, "compatibility")
-    
-    response = f"""
-💞 *Анализ совместимости* 💞
-
-*Даты:*
-• {date1}
-• {date2}
-
-*Уровень совместимости:* {compat_level}
-
-{analysis}
-
-🔢 *Числа жизненного пути:*
-• {NumerologyCalculator.calculate_life_path(date1) or '?'}
-• {NumerologyCalculator.calculate_life_path(date2) or '?'}
-"""
-    
-    await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-
-# =====================
-# FORECAST & HOROSCOPE HANDLERS
+# ОБРАБОТЧИКИ CALLBACK КНОПОК
 # =====================
 
 @router.callback_query(lambda c: c.data.startswith("horoscope_"))
-async def handle_horoscope_callback(callback: types.CallbackQuery):
-    """Обработка выбора периода для гороскопа"""
+async def process_horoscope_callback(callback: types.CallbackQuery):
+    """Обработка выбора периода для гороскопа - ИСПРАВЛЕННЫЙ ВАРИАНТ"""
     period = callback.data.split("_")[1]
     
     period_names = {
@@ -671,6 +436,9 @@ async def handle_horoscope_callback(callback: types.CallbackQuery):
         "month": "месяц 📆"
     }
     
+    logger.info(f"Пользователь {callback.from_user.id} выбрал гороскоп на {period}")
+    
+    # Отправляем новое сообщение вместо редактирования
     await callback.message.answer(
         f"🌟 *Гороскоп на {period_names[period]}*\n\n"
         "Введите вашу дату рождения:\n\n"
@@ -679,10 +447,12 @@ async def handle_horoscope_callback(callback: types.CallbackQuery):
         "Я создам персонализированный нумерологический гороскоп.",
         parse_mode="Markdown"
     )
+    
+    # Обязательно отвечаем на callback
     await callback.answer()
 
 @router.callback_query(lambda c: c.data.startswith("period_"))
-async def handle_forecast_callback(callback: types.CallbackQuery):
+async def process_forecast_callback(callback: types.CallbackQuery):
     """Обработка выбора периода для прогноза"""
     period = callback.data.split("_")[1]
     
@@ -698,52 +468,169 @@ async def handle_forecast_callback(callback: types.CallbackQuery):
         "Введите вашу дату рождения:\n\n"
         "*Формат:* ДД.ММ.ГГГГ\n"
         "*Пример:* 15.05.1990\n\n"
-        "Я сделаю нумерологический прогноз для выбранного периода.",
+        "Я сделаю нумерологический прогноз.",
         parse_mode="Markdown"
     )
     await callback.answer()
 
-@router.message(lambda m: m.text and is_date(m.text))
-async def process_affirmation(m: Message):
-    """Обработка запроса на аффирмацию"""
-    user_id = m.from_user.id
-    date_str = m.text
+@router.callback_query(lambda c: c.data.startswith("comp_"))
+async def process_compatibility_callback(callback: types.CallbackQuery):
+    """Обработка выбора типа совместимости"""
+    comp_type = callback.data.split("_")[1]
     
-    # Генерируем аффирмацию
-    affirmation = NumerologyCalculator.generate_affirmation(date_str)
+    type_names = {
+        "love": "романтических отношений 💑",
+        "business": "делового партнерства 💼", 
+        "friends": "дружбы 👥",
+        "family": "семейных отношений 👨‍👩‍👧‍👦"
+    }
     
-    # Получаем число жизненного пути для контекста
-    life_number = NumerologyCalculator.calculate_life_path(date_str)
-    
-    response = f"""
-🔄 *Ваша персональная аффирмация* 🔄
-
-✨ *{affirmation}* ✨
-
-*Почему именно эта аффирмация:*
-Она резонирует с энергией вашего числа жизненного пути ({life_number or '?'}), 
-помогая усилить ваши природные качества и привлечь нужные энергии.
-
-*Как использовать:*
-1. Повторяйте утром, настраиваясь на день
-2. Запишите и разместите на видном месте
-3. Используйте как мантру в течение дня
-4. Визуализируйте, как это проявляется
-
-🌟 *Число дня:* {random.randint(1, 9)} (энергия сегодняшнего дня)
-"""
-    
-    await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await callback.message.answer(
+        f"💞 *Совместимость для {type_names[comp_type]}*\n\n"
+        "Введите две даты рождения через пробел:\n\n"
+        "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
+        "*Пример:* 15.05.1990 20.08.1985\n\n"
+        "Я проанализирую энергетическую совместимость.",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 # =====================
-# FLASK WEBHOOK SERVER
+# ОБРАБОТЧИКИ ДАТ
+# =====================
+
+def is_valid_date(text: str) -> bool:
+    try:
+        datetime.strptime(text, "%d.%m.%Y")
+        return True
+    except:
+        return False
+
+@router.message(lambda m: m.text and is_valid_date(m.text))
+async def process_date(message: Message):
+    """Обработка введенной даты"""
+    date_str = message.text
+    user_id = message.from_user.id
+    
+    await message.answer("✨ Анализирую данные...")
+    
+    # Обновляем статистику
+    stats["calculations"] = stats.get("calculations", 0) + 1
+    today = datetime.now().strftime("%Y-%m-%d")
+    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
+    save_stats(stats)
+    
+    # Получаем число жизненного пути
+    life_number = NumerologyCalculator.calculate_life_path(date_str)
+    affirmation = NumerologyCalculator.generate_affirmation(date_str)
+    
+    # Простой ответ для теста
+    response = f"""
+✨ *Анализ для {date_str}*
+
+*Число жизненного пути:* {life_number or 'не определено'}
+
+*Значение числа {life_number}:*
+{await get_number_meaning(life_number)}
+
+🔄 *Ваша аффирмация:*
+{affirmation}
+
+*Совет на сегодня:*
+{random.choice([
+    "Сфокусируйтесь на главных целях",
+    "Будьте открыты новым знакомствам",
+    "Проявите творческий подход",
+    "Слушайте свою интуицию",
+    "Заботьтесь о близких"
+])}
+"""
+    
+    await message.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+
+async def get_number_meaning(number: int) -> str:
+    meanings = {
+        1: "Лидерство, независимость, инновации",
+        2: "Дипломатия, сотрудничество, гармония", 
+        3: "Творчество, общение, оптимизм",
+        4: "Стабильность, практичность, организация",
+        5: "Свобода, перемены, адаптивность",
+        6: "Ответственность, забота, гармония",
+        7: "Анализ, интуиция, духовность",
+        8: "Успех, изобилие, власть",
+        9: "Завершение, мудрость, гуманизм",
+        11: "Интуиция, озарение, вдохновение",
+        22: "Мастер-строитель, реализация идей",
+        33: "Мастер-учитель, служение человечеству"
+    }
+    return meanings.get(number, "Особое число с уникальной энергией")
+
+# =====================
+# FLASK APP
 # =====================
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "🔮 Нумерологический бот работает! Напишите /start в Telegram"
+    return """
+    <html>
+        <head>
+            <title>🔮 Нумерологический Бот</title>
+            <meta charset="utf-8">
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    max-width: 800px;
+                    margin: 50px auto;
+                    padding: 20px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    text-align: center;
+                    border-radius: 20px;
+                }
+                h1 {
+                    font-size: 3em;
+                    margin-bottom: 20px;
+                }
+                .status {
+                    background: rgba(255,255,255,0.2);
+                    padding: 20px;
+                    border-radius: 10px;
+                    margin: 20px 0;
+                }
+                a {
+                    color: white;
+                    background: rgba(255,255,255,0.3);
+                    padding: 10px 20px;
+                    border-radius: 5px;
+                    text-decoration: none;
+                    margin: 10px;
+                    display: inline-block;
+                }
+                a:hover {
+                    background: rgba(255,255,255,0.5);
+                }
+            </style>
+        </head>
+        <body>
+            <h1>🔮 Нумерологический Бот</h1>
+            <div class="status">
+                <p>✅ Бот работает и готов к запросам!</p>
+                <p>👥 Пользователей: {}</p>
+                <p>🕐 Запущен: {}</p>
+            </div>
+            <div>
+                <a href="/admin">👑 Админ-панель</a>
+                <a href="/ping">📡 Ping</a>
+                <a href="/health">❤️ Health Check</a>
+            </div>
+            <p style="margin-top: 30px; opacity: 0.8;">
+                Откройте Telegram и найдите бота для использования
+            </p>
+        </body>
+    </html>
+    """.format(stats['total_users'], datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
 
 @app.route("/ping")
 def ping():
@@ -753,283 +640,165 @@ def ping():
 def health():
     return {
         "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
         "bot": BOT_TOKEN is not None,
-        "users": len(users),
-        "timestamp": datetime.now().isoformat()
+        "users": stats['total_users'],
+        "requests_today": stats['daily_stats'].get(datetime.now().strftime("%Y-%m-%d"), 0)
     }
 
 @app.route("/admin")
 def admin():
-    """Веб-админка"""
     today = datetime.now().strftime("%Y-%m-%d")
     
-    html = """
+    html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Админ-панель нумерологического бота</title>
+        <title>Админ-панель</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 1000px;
-                margin: 0 auto;
-                padding: 20px;
-                background-color: #f5f5f5;
-            }
-            .header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                padding: 30px;
-                border-radius: 15px;
-                margin-bottom: 30px;
-                text-align: center;
-            }
-            .stats-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                gap: 20px;
-                margin-bottom: 30px;
-            }
-            .stat-card {
-                background: white;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                text-align: center;
-                transition: transform 0.3s;
-            }
-            .stat-card:hover {
-                transform: translateY(-5px);
-            }
-            .stat-number {
-                font-size: 42px;
-                font-weight: bold;
-                color: #667eea;
-                margin: 10px 0;
-            }
-            .stat-label {
-                color: #666;
-                font-size: 14px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-            }
-            table {
-                width: 100%;
-                background: white;
-                border-radius: 10px;
-                overflow: hidden;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                margin-top: 20px;
-            }
-            th {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                padding: 15px;
-                text-align: left;
-            }
-            td {
-                padding: 15px;
-                border-bottom: 1px solid #eee;
-            }
-            tr:hover {
-                background-color: #f9f9f9;
-            }
-            .status {
-                display: inline-block;
-                padding: 5px 15px;
-                background: #4CAF50;
-                color: white;
-                border-radius: 20px;
-                font-size: 14px;
-            }
+            body {{ font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #f5f5f5; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 15px; margin-bottom: 30px; text-align: center; }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }}
+            .stat-card {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }}
+            .stat-number {{ font-size: 36px; font-weight: bold; color: #667eea; margin: 10px 0; }}
+            .stat-label {{ color: #666; font-size: 14px; text-transform: uppercase; }}
         </style>
     </head>
     <body>
         <div class="header">
             <h1>👑 Админ-панель нумерологического бота</h1>
-            <p>Статус: <span class="status">● Активен</span> | Обновлено: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """</p>
-            <p>Админ ID: """ + str(ADMIN_IDS[0]) + """ | Webhook: """ + WEBHOOK_URL + """</p>
+            <p>Статус: <span style="background: #4CAF50; color: white; padding: 5px 15px; border-radius: 20px;">● Активен</span></p>
+            <p>Обновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}</p>
         </div>
         
         <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number">""" + str(stats.get('total_users', 0)) + """</div>
-                <div class="stat-label">Пользователей</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number">""" + str(stats.get('calculations', 0)) + """</div>
-                <div class="stat-label">Анализов портретов</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number">""" + str(stats.get('compatibility_checks', 0)) + """</div>
-                <div class="stat-label">Проверок совместимости</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number">""" + str(stats.get('forecasts', 0)) + """</div>
-                <div class="stat-label">Прогнозов</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number">""" + str(stats.get('horoscopes', 0)) + """</div>
-                <div class="stat-label">Гороскопов</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number">""" + str(stats['daily_stats'].get(today, 0)) + """</div>
-                <div class="stat-label">Запросов сегодня</div>
-            </div>
+            <div class="stat-card"><div class="stat-number">{stats.get('total_users', 0)}</div><div class="stat-label">Пользователей</div></div>
+            <div class="stat-card"><div class="stat-number">{stats.get('calculations', 0)}</div><div class="stat-label">Анализов</div></div>
+            <div class="stat-card"><div class="stat-number">{stats.get('compatibility_checks', 0)}</div><div class="stat-label">Совместимостей</div></div>
+            <div class="stat-card"><div class="stat-number">{stats.get('horoscopes', 0)}</div><div class="stat-label">Гороскопов</div></div>
+            <div class="stat-card"><div class="stat-number">{stats.get('forecasts', 0)}</div><div class="stat-label">Прогнозов</div></div>
+            <div class="stat-card"><div class="stat-number">{stats['daily_stats'].get(today, 0)}</div><div class="stat-label">Запросов сегодня</div></div>
         </div>
         
-        <h2>👥 Последние пользователи</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Имя</th>
-                    <th>Username</th>
-                    <th>Дата регистрации</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
-    
-    # Добавляем пользователей
-    user_items = list(users.items())[-15:]
-    for user_id, user_data in user_items:
-        html += f"""
-                <tr>
-                    <td>{user_id}</td>
-                    <td>{user_data.get('first_name', 'Неизвестно')}</td>
-                    <td>@{user_data.get('username', 'нет')}</td>
-                    <td>{user_data.get('joined', '')}</td>
-                </tr>
-        """
-    
-    html += """
-            </tbody>
-        </table>
-        
-        <div style="margin-top: 30px; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-            <h3>📈 Активность за последние 7 дней</h3>
-            <p>
-    """
-    
-    # Показываем статистику за неделю
-    for i in range(6, -1, -1):
-        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        count = stats['daily_stats'].get(date, 0)
-        html += f"{date}: {count} запросов<br>"
-    
-    html += """
-            </p>
+        <div style="background: white; padding: 20px; border-radius: 10px; margin-top: 30px;">
+            <h3>📊 Информация</h3>
+            <p><strong>Webhook URL:</strong> {WEBHOOK_URL}</p>
+            <p><strong>Админ ID:</strong> {ADMIN_IDS[0]}</p>
+            <p><strong>База URL:</strong> {BASE_URL}</p>
         </div>
     </body>
     </html>
     """
-    
     return html
 
 @app.route(WEBHOOK_PATH, methods=["POST", "GET"])
 def webhook():
     if request.method == "GET":
-        return "Webhook is working!", 200
+        return "✅ Webhook готов к работе!", 200
     
     try:
         data = request.get_json()
+        
+        # Логируем входящие запросы
+        if 'message' in data and 'text' in data['message']:
+            logger.info(f"📨 Сообщение от {data['message']['from'].get('id')}: {data['message']['text']}")
+        elif 'callback_query' in data:
+            logger.info(f"🔘 Callback от {data['callback_query']['from']['id']}: {data['callback_query']['data']}")
+        
         update = types.Update(**data)
-
+        
+        # Запускаем обработку в event loop
         asyncio.run_coroutine_threadsafe(
             dp.feed_update(bot, update),
             loop
         )
         return "ok"
     except Exception as e:
-        print(f"Webhook error: {e}")
+        logger.error(f"❌ Ошибка webhook: {e}")
         return "error", 500
-
-# =====================
-# EVENT LOOP
-# =====================
-
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 # =====================
 # WEBHOOK SETUP
 # =====================
 
-def delete_and_set_webhook():
-    """Удалить старый webhook и установить новый"""
+def setup_webhook():
     try:
+        logger.info("🔄 Настройка webhook...")
+        
         # Удаляем старый webhook
         delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
         requests.post(delete_url, json={"drop_pending_updates": True})
-        print("✅ Старый webhook удален")
-        
-        # Ждем секунду
-        import time
-        time.sleep(1)
+        logger.info("✅ Старый webhook удален")
         
         # Устанавливаем новый
         set_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
         data = {
             "url": WEBHOOK_URL,
-            "drop_pending_updates": True
+            "drop_pending_updates": True,
+            "allowed_updates": ["message", "callback_query"]
         }
         response = requests.post(set_url, json=data)
-        print(f"✅ Новый webhook установлен: {WEBHOOK_URL}")
-        print(f"✅ Ответ Telegram: {response.json()}")
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+            logger.info(f"✅ Ответ Telegram: {response.json()}")
+        else:
+            logger.error(f"❌ Ошибка установки webhook: {response.text}")
     except Exception as e:
-        print(f"⚠️ Webhook error: {e}")
+        logger.error(f"❌ Ошибка настройки webhook: {e}")
 
 # =====================
-# START
+# ЗАПУСК
 # =====================
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
+    logger.info(f"🚀 Запуск Flask на порту {port}")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
 
 if __name__ == "__main__":
-    print("🚀 Starting Numerology Bot...")
+    logger.info("=" * 50)
+    logger.info("🚀 ЗАПУСК НУМЕРОЛОГИЧЕСКОГО БОТА")
+    logger.info("=" * 50)
     
-    # Проверка переменных
     if not BOT_TOKEN:
-        print("❌ ERROR: BOT_TOKEN is not set!")
-        exit(1)
-    if not GROQ_API_KEY:
-        print("⚠️ WARNING: GROQ_API_KEY is not set! AI features will not work.")
-    if not BASE_URL:
-        print("❌ ERROR: BASE_URL is not set!")
+        logger.error("❌ BOT_TOKEN не установлен!")
         exit(1)
     
-    print(f"✅ BOT_TOKEN: {'Set' if BOT_TOKEN else 'Not set'}")
-    print(f"✅ GROQ_API_KEY: {'Set' if GROQ_API_KEY else 'Not set'}")
-    print(f"✅ BASE_URL: {BASE_URL}")
-    print(f"✅ ADMIN_IDS: {ADMIN_IDS}")
+    logger.info(f"✅ BOT_TOKEN: {'Установлен' if BOT_TOKEN else 'Нет'}")
+    logger.info(f"✅ GROQ_API_KEY: {'Установлен' if GROQ_API_KEY else 'Нет'}")
+    logger.info(f"✅ BASE_URL: {BASE_URL}")
+    logger.info(f"✅ ADMIN_IDS: {ADMIN_IDS}")
     
     # Создаем файлы если их нет
     if not USERS_FILE.exists():
         save_users({})
+        logger.info("✅ Файл users.json создан")
     if not STATS_FILE.exists():
         save_stats(load_stats())
+        logger.info("✅ Файл stats.json создан")
     
-    # Устанавливаем webhook
-    delete_and_set_webhook()
-
-    Thread(target=run_flask, daemon=True).start()
-
-    print("✨ Нумерологический бот запущен!")
-    print(f"🌐 Админ-панель: {BASE_URL}/admin")
-    print(f"👑 Админ ID: {ADMIN_IDS[0]}")
-    print("\n" + "="*50)
-    print("🎯 Ключевые функции:")
-    print("1. ✨ Нумеропортрет - глубокий анализ личности")
-    print("2. 💞 Совместимость - 4 типа отношений") 
-    print("3. 🌟 Гороскоп дня - на разные периоды")
-    print("4. 📅 Прогноз на период - неделя/месяц/год")
-    print("5. 🔄 Аффирмация - персональные утверждения")
-    print("="*50)
-    print("\n📊 Статус: Ожидание запросов...")
+    # Настраиваем event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
-    loop.run_forever()
+    # Настраиваем webhook
+    setup_webhook()
+    
+    # Запускаем Flask в отдельном потоке
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    logger.info("✨ Нумерологический бот запущен!")
+    logger.info(f"🌐 Админ-панель: {BASE_URL}/admin")
+    logger.info(f"👑 Админ ID: {ADMIN_IDS[0]}")
+    logger.info("📱 Откройте Telegram и найдите вашего бота")
+    
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        logger.info("⏹️ Остановка бота...")
+    finally:
+        loop.close()
