@@ -14,6 +14,7 @@ try:
     from flask import Flask, request
     from aiogram import Bot, Dispatcher, Router, types, F
     from aiogram.filters import CommandStart, Command
+    from aiogram.client.default import DefaultBotProperties
     from aiogram.types import (
         ReplyKeyboardMarkup,
         KeyboardButton,
@@ -493,11 +494,15 @@ async def generate_fallback_response(prompt: str, prompt_type: str) -> str:
     return "✨ На основе анализа чисел вижу благоприятные энергии! Рекомендую доверять интуиции и сохранять позитивный настрой."
 
 # =====================
-# ИНИЦИАЛИЗАЦИЯ БОТА
+# ИНИЦИАЛИЗАЦИЯ БОТА - ИСПРАВЛЕННАЯ
 # =====================
 
 try:
-    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    # ИСПРАВЛЕНО: используем DefaultBotProperties для aiogram 3.7.0+
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode="HTML")
+    )
     dp = Dispatcher()
     router = Router()
     dp.include_router(router)
@@ -1030,9 +1035,6 @@ async def process_date_input(message: Message):
     # Сохраняем дату
     user_dates[user_id] = date_str
     save_data(USER_DATES_FILE, user_dates)
-    
-    # Определяем контекст (какая функция была выбрана)
-    context = "portrait"  # по умолчанию
     
     await message.answer("✨ Анализирую данные...")
     
