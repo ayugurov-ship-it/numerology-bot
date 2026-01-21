@@ -202,7 +202,7 @@ class NumerologyCalculator:
         return affirmations.get(life_number, "Я принимаю день с благодарностью и открытостью")
 
 # =====================
-# GROK API
+# GROQ API
 # =====================
 
 async def ask_groq(prompt: str, prompt_type: str = "portrait") -> str:
@@ -658,14 +658,15 @@ async def process_compatibility(m: Message):
 # FORECAST & HOROSCOPE HANDLERS
 # =====================
 
-@router.message(lambda m: is_date(m.text.split()[0]) if m.text else False)
+@router.message(lambda m: m.text and is_date(m.text.split()[0]))
 async def process_forecast_or_horoscope(m: Message):
     """Обработка прогнозов и гороскопов"""
     user_id = m.from_user.id
-    date_str = m.text.split()[0]
+    date_str = m.text
     
     # Определяем тип запроса по контексту
-    if "завтра" in m.text.lower() or "сегодня" in m.text.lower() or "неделя" in m.text.lower() or "месяц" in m.text.lower():
+    text_lower = m.text.lower()
+    if any(word in text_lower for word in ["завтра", "сегодня", "неделя", "месяц", "гороскоп"]):
         # Это гороскоп
         await process_horoscope_simple(m, date_str, user_id)
     else:
@@ -768,8 +769,8 @@ async def process_forecast_simple(m: Message, date_str: str, user_id: int):
 # AFFIRMATION HANDLER
 # =====================
 
-@router.message(lambda m: is_date(m.text) and m.reply_to_message and "Аффирмация" in m.reply_to_message.text)
-async def process_affirmation_special(m: Message):
+@router.message(lambda m: is_date(m.text))
+async def process_affirmation(m: Message):
     """Обработка запроса на аффирмацию"""
     user_id = m.from_user.id
     date_str = m.text
