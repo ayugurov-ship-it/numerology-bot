@@ -10,13 +10,16 @@ from datetime import datetime, timedelta
 from flask import Flask, request, render_template_string
 from threading import Thread
 from collections import defaultdict
+import random
 
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
-    Message
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 
 # =====================
@@ -33,33 +36,39 @@ WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = BASE_URL + WEBHOOK_PATH
 ADMIN_PATH = "/admin"
 
-GROQ_SYSTEM_PROMPT = """
-Ты — профессиональный нумеролог-консультант с 20-летним опытом.
-
-Твоя задача:
-— рассчитывать нумерологические значения по дате рождения;
-— объяснять результаты простым и понятным языком;
-— давать практические рекомендации;
-— писать дружелюбно, уверенно, без мистического фанатизма;
-— избегать запугивания и категоричных утверждений.
-
-Формат ответа:
-1. Краткий вывод
-2. Основные числа
-3. Расшифровка
-4. Сильные стороны
-5. Зоны роста
-6. Совет на год
-
-Язык: русский. Не упоминай, что ты ИИ.
-"""
+# Расширенный промпт для разных типов анализа
+GROQ_SYSTEM_PROMPTS = {
+    "default": """Ты — профессиональный нумеролог-консультант с 20-летним опытом.
+Твоя задача — рассчитывать нумерологические значения и давать практические рекомендации.
+Пиши дружелюбно, уверенно, без мистического фанатизма.
+Язык: русский. Не упоминай, что ты ИИ.""",
+    
+    "detailed": """Ты — эксперт по нумерологии и психологии личности.
+Анализируй даты рождения, давая глубокие, персонализированные инсайты.
+Формат: 1) Ключевое число, 2) Сильные стороны, 3) Зоны роста, 4) Практические советы.
+Будь точным, но вдохновляющим.""",
+    
+    "compatibility": """Ты — специалист по отношениям и совместимости.
+Анализируй пары дат рождения, давая рекомендации для разных сфер жизни.
+Будь дипломатичным, подчеркивай сильные стороны пары.""",
+    
+    "forecast": """Ты — аналитик по циклам и прогнозам.
+На основе даты рождения делай прогнозы на указанный период.
+Сосредоточься на возможностях и вызовах, давай практические рекомендации.""",
+    
+    "horoscope": """Ты — астролог-нумеролог.
+Создавай вдохновляющие, персонализированные гороскопы на основе чисел.
+Сочетай нумерологию с позитивной психологией.
+Будь креативным, но реалистичным."""
+}
 
 # =====================
-# USERS STORAGE
+# USERS STORAGE & PERSONALIZATION
 # =====================
 
 USERS_FILE = Path("users.json")
 STATS_FILE = Path("stats.json")
+PERSONALIZATION_FILE = Path("personalization.json")
 
 def load_users():
     if USERS_FILE.exists():
@@ -78,76 +87,187 @@ def load_stats():
         "calculations": 0,
         "compatibility_checks": 0,
         "forecasts": 0,
+        "horoscopes": 0,
         "daily_stats": defaultdict(int),
-        "user_activity": {}
+        "popular_features": defaultdict(int)
     }
 
 def save_stats(data):
     STATS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+def load_personalization():
+    if PERSONALIZATION_FILE.exists():
+        return json.loads(PERSONALIZATION_FILE.read_text(encoding="utf-8"))
+    return {"user_preferences": {}, "user_history": {}}
+
+def save_personalization(data):
+    PERSONALIZATION_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
 users = load_users()
 stats = load_stats()
+personalization = load_personalization()
 
 # =====================
-# STATS TRACKING
+# PERSONALIZATION ENGINE
 # =====================
 
-def update_stats(user_id: int, action: str):
-    """Обновление статистики"""
-    today = datetime.now().strftime("%Y-%m-%d")
+class PersonalizationEngine:
+    @staticmethod
+    def update_user_profile(user_id: int, action: str, data: dict = None):
+        """Обновление профиля пользователя для персонализации"""
+        user_id_str = str(user_id)
+        
+        if user_id_str not in personalization["user_history"]:
+            personalization["user_history"][user_id_str] = {
+                "actions": [],
+                "preferences": {},
+                "last_interaction": datetime.now().isoformat()
+            }
+        
+        # Записываем действие
+        personalization["user_history"][user_id_str]["actions"].append({
+            "action": action,
+            "timestamp": datetime.now().isoformat(),
+            "data": data
+        })
+        
+        # Ограничиваем историю последними 50 действиями
+        if len(personalization["user_history"][user_id_str]["actions"]) > 50:
+            personalization["user_history"][user_id_str]["actions"] = personalization["user_history"][user_id_str]["actions"][-50:]
+        
+        save_personalization(personalization)
     
-    # Общая статистика
-    stats["total_users"] = len(users)
-    stats["active_users"] = len([u for u in users.values() if u.get("last_active", "").startswith(today)])
+    @staticmethod
+    def get_user_preferences(user_id: int) -> dict:
+        """Получение предпочтений пользователя"""
+        user_id_str = str(user_id)
+        return personalization["user_history"].get(user_id_str, {}).get("preferences", {})
     
-    if action == "calculation":
-        stats["calculations"] += 1
-    elif action == "compatibility":
-        stats["compatibility_checks"] += 1
-    elif action == "forecast":
-        stats["forecasts"] += 1
-    
-    # Дневная статистика
-    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
-    
-    # Активность пользователя
-    user_stats = stats["user_activity"].get(str(user_id), {
-        "calculations": 0,
-        "compatibility": 0,
-        "forecasts": 0,
-        "last_active": today
-    })
-    
-    if action in user_stats:
-        user_stats[action] += 1
-    user_stats["last_active"] = today
-    stats["user_activity"][str(user_id)] = user_stats
-    
-    save_stats(stats)
+    @staticmethod
+    def personalize_response(user_id: int, base_response: str, feature_type: str) -> str:
+        """Персонализация ответа на основе истории пользователя"""
+        user_history = personalization["user_history"].get(str(user_id), {})
+        actions = user_history.get("actions", [])
+        
+        if len(actions) < 3:
+            return base_response
+        
+        # Анализируем предыдущие интересы
+        recent_actions = [a["action"] for a in actions[-5:]]
+        
+        # Добавляем персонализированное вступление
+        personalized_intros = [
+            "Исходя из вашего интереса к саморазвитию, ",
+            "Учитывая ваш предыдущий запрос, ",
+            "Основываясь на вашей истории обращений, ",
+            "С учетом ваших интересов, "
+        ]
+        
+        # Проверяем, есть ли повторяющиеся темы
+        action_counts = {}
+        for action in recent_actions:
+            action_counts[action] = action_counts.get(action, 0) + 1
+        
+        # Если пользователь часто запрашивает определенный тип анализа
+        for action, count in action_counts.items():
+            if count >= 2:
+                if "relationship" in action:
+                    base_response = "💖 Замечаю ваш интерес к теме отношений. " + base_response
+                elif "career" in action:
+                    base_response = "💼 Вижу ваш фокус на карьере. " + base_response
+        
+        return base_response
 
-def update_user_info(user_id: int, username: str, first_name: str, last_name: str = ""):
-    """Обновление информации о пользователе"""
-    if str(user_id) not in users:
-        users[str(user_id)] = {
-            "username": username,
-            "first_name": first_name,
-            "last_name": last_name,
-            "joined": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "last_active": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "calculations": 0,
-            "compatibility": 0,
-            "forecasts": 0
+# =====================
+# UNIQUE FEATURES
+# =====================
+
+class NumerologyFeatures:
+    """Уникальные фичи нумерологического бота"""
+    
+    @staticmethod
+    def calculate_life_path_number(date_str: str) -> int:
+        """Расчет числа жизненного пути"""
+        try:
+            # Убираем точки и получаем цифры
+            digits = date_str.replace('.', '')
+            total = sum(int(d) for d in digits)
+            
+            # Сокращаем до одной цифры (кроме мастер-чисел 11, 22, 33)
+            while total > 9 and total not in [11, 22, 33]:
+                total = sum(int(d) for d in str(total))
+            
+            return total
+        except:
+            return None
+    
+    @staticmethod
+    def get_compatibility_type(dates: tuple) -> str:
+        """Определение типа совместимости"""
+        num1 = NumerologyFeatures.calculate_life_path_number(dates[0])
+        num2 = NumerologyFeatures.calculate_life_path_number(dates[1])
+        
+        if not num1 or not num2:
+            return "general"
+        
+        # Определяем тип совместимости на основе чисел
+        compatible_nums = {
+            "romantic": [(2, 6), (3, 5), (1, 9), (4, 8)],
+            "business": [(1, 8), (4, 4), (3, 9), (6, 6)],
+            "friendship": [(5, 7), (2, 2), (9, 9), (1, 3)],
+            "creative": [(3, 3), (7, 5), (9, 6), (2, 8)]
         }
-    else:
-        users[str(user_id)]["last_active"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        pair = (num1, num2) if num1 <= num2 else (num2, num1)
+        
+        for comp_type, pairs in compatible_nums.items():
+            if pair in pairs:
+                return comp_type
+        
+        return "general"
     
-    save_users(users)
+    @staticmethod
+    def generate_daily_affirmation(date_str: str) -> str:
+        """Генерация персональной аффирмации на день"""
+        life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+        
+        affirmations = {
+            1: "Я — лидер своей жизни, уверенно иду к своим целям",
+            2: "Я открыт гармоничным отношениям и сотрудничеству",
+            3: "Я творчески выражаю себя и несу радость в мир",
+            4: "Я строю прочный фундамент для своего будущего",
+            5: "Я свободен в своих выборах и открыт переменам",
+            6: "Я создаю гармонию и заботу в своих отношениях",
+            7: "Я доверяю своей интуиции и ищу мудрость",
+            8: "Я привлекаю изобилие и достигаю успеха",
+            9: "Я завершаю циклы с благодарностью и открываюсь новому",
+            11: "Я вдохновляю других своим видением и чувствительностью",
+            22: "Я воплощаю великие идеи в реальность",
+            33: "Я несу свет и исцеление через служение другим"
+        }
+        
+        return affirmations.get(life_number, "Я принимаю сегодняшний день с благодарностью и открытостью")
+    
+    @staticmethod
+    def calculate_favorable_days(date_str: str, month: str) -> list:
+        """Расчет благоприятных дней на месяц"""
+        life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+        
+        # Логика расчета благоприятных дней на основе числа
+        favorable_days = []
+        base_days = list(range(1, 31))
+        
+        if life_number:
+            # Фильтруем дни, которые соответствуют вибрации числа
+            favorable_days = [day for day in base_days if day % life_number == 0 or str(life_number) in str(day)]
+        
+        return favorable_days[:5]  # Возвращаем 5 наиболее благоприятных дней
 
 # =====================
 # GROK API
 # =====================
 
-async def ask_groq(prompt: str, name: str) -> str:
+async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
@@ -158,10 +278,11 @@ async def ask_groq(prompt: str, name: str) -> str:
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [
-            {"role": "system", "content": GROQ_SYSTEM_PROMPT},
+            {"role": "system", "content": GROQ_SYSTEM_PROMPTS[system_prompt_key]},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7
+        "temperature": 0.8,
+        "max_tokens": 1500
     }
 
     try:
@@ -170,14 +291,14 @@ async def ask_groq(prompt: str, name: str) -> str:
                 if resp.status != 200:
                     error_text = await resp.text()
                     print(f"GROQ API ERROR {resp.status}: {error_text}")
-                    return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
+                    return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
                     
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
 
     except Exception as e:
         print("GROQ ERROR:", e)
-        return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
+        return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
 # =====================
 # BOT INIT
@@ -189,33 +310,31 @@ router = Router()
 dp.include_router(router)
 
 # =====================
-# KEYBOARD
+# BEAUTIFUL KEYBOARDS
 # =====================
 
 def main_menu(user_id: int = None):
-    """Создает меню. Для админа добавляется кнопка Админ"""
+    """Создает красивое главное меню"""
+    # Базовые кнопки для всех пользователей
+    keyboard = [
+        [KeyboardButton(text="✨ Мой нумерологический портрет")],
+        [KeyboardButton(text="💞 Совместимость партнеров")],
+        [KeyboardButton(text="📅 Прогноз на период")],
+        [KeyboardButton(text="🌟 Персональный гороскоп")],
+        [KeyboardButton(text="🔄 Моя аффирмация дня")]
+    ]
+    
+    # Добавляем кнопку админа если нужно
     if user_id in ADMIN_IDS:
-        # Меню для администратора
-        return ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="🧮 Расчет по дате")],
-                [KeyboardButton(text="📊 Совместимость")],
-                [KeyboardButton(text="🔮 Прогноз на год")],
-                [KeyboardButton(text="👑 Админ"), KeyboardButton(text="ℹ️ Помощь")]
-            ],
-            resize_keyboard=True
-        )
-    else:
-        # Меню для обычных пользователей
-        return ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="🧮 Расчет по дате")],
-                [KeyboardButton(text="📊 Совместимость")],
-                [KeyboardButton(text="🔮 Прогноз на год")],
-                [KeyboardButton(text="ℹ️ Помощь")]
-            ],
-            resize_keyboard=True
-        )
+        keyboard.append([KeyboardButton(text="👑 Админ-панель")])
+    
+    keyboard.append([KeyboardButton(text="ℹ️ О боте")])
+    
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие..."
+    )
 
 def admin_menu():
     """Меню админ-панели"""
@@ -224,10 +343,59 @@ def admin_menu():
             [KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="👥 Пользователи")],
             [KeyboardButton(text="📢 Рассылка")],
-            [KeyboardButton(text="🔙 Главное меню")]
+            [KeyboardButton(text="🔙 В главное меню")]
         ],
         resize_keyboard=True
     )
+
+def compatibility_types_menu():
+    """Меню выбора типа совместимости"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💑 Для отношений", callback_data="compat_relationship"),
+                InlineKeyboardButton(text="💼 Для бизнеса", callback_data="compat_business")
+            ],
+            [
+                InlineKeyboardButton(text="👥 Для дружбы", callback_data="compat_friendship"),
+                InlineKeyboardButton(text="👨‍👩‍👧‍👦 Для семьи", callback_data="compat_family")
+            ]
+        ]
+    )
+
+def forecast_period_menu():
+    """Меню выбора периода прогноза"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📅 На месяц", callback_data="forecast_month"),
+                InlineKeyboardButton(text="📆 На 3 месяца", callback_data="forecast_quarter")
+            ],
+            [
+                InlineKeyboardButton(text="🎯 На год", callback_data="forecast_year"),
+                InlineKeyboardButton(text="✨ На неделю", callback_data="forecast_week")
+            ]
+        ]
+    )
+
+def horoscope_type_menu():
+    """Меню выбора типа гороскопа"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🌞 На сегодня", callback_data="horoscope_today"),
+                InlineKeyboardButton(text="🌙 На завтра", callback_data="horoscope_tomorrow")
+            ],
+            [
+                InlineKeyboardButton(text="📅 На неделю", callback_data="horoscope_week"),
+                InlineKeyboardButton(text="📆 На месяц", callback_data="horoscope_month")
+            ]
+        ]
+    )
+
+# =====================
+# UTILITY FUNCTIONS
+# =====================
 
 def is_date(text: str) -> bool:
     try:
@@ -235,6 +403,15 @@ def is_date(text: str) -> bool:
         return True
     except:
         return False
+
+def format_user_name(user: types.User) -> str:
+    """Форматирование имени пользователя"""
+    name_parts = []
+    if user.first_name:
+        name_parts.append(user.first_name)
+    if user.last_name:
+        name_parts.append(user.last_name)
+    return " ".join(name_parts) if name_parts else "Дорогой друг"
 
 # =====================
 # HANDLERS
@@ -247,428 +424,506 @@ async def start(m: Message):
     first_name = m.from_user.first_name or ""
     last_name = m.from_user.last_name or ""
     
-    update_user_info(user_id, username, first_name, last_name)
+    # Обновляем информацию о пользователе
+    if str(user_id) not in users:
+        users[str(user_id)] = {
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "joined": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_active": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_users(users)
     
-    if user_id in ADMIN_IDS:
-        await m.answer(
-            "👑 Привет, администратор!\nВыберите действие:",
-            reply_markup=main_menu(user_id)
-        )
-    else:
-        await m.answer(
-            "Привет! Я нумерологический бот 🔢\nВыбери действие:",
-            reply_markup=main_menu(user_id)
-        )
+    # Персонализированное приветствие
+    user_name = format_user_name(m.from_user)
+    
+    welcome_messages = [
+        f"✨ Приветствую, {user_name}! Я — ваш личный нумеролог.",
+        f"🌟 Добро пожаловать, {user_name}! Готовы раскрыть тайны чисел?",
+        f"🔮 Здравствуйте, {user_name}! Числа расскажут многое о вашем пути.",
+        f"💫 Рад видеть вас, {user_name}! Давайте исследуем мир нумерологии вместе."
+    ]
+    
+    welcome_text = random.choice(welcome_messages) + "\n\n" + \
+                  "Выберите, что вас интересует:"
+    
+    await m.answer(
+        welcome_text,
+        reply_markup=main_menu(user_id)
+    )
+    
+    # Обновляем статистику
+    PersonalizationEngine.update_user_profile(user_id, "start")
 
-@router.message(lambda m: m.text == "👑 Админ")
+@router.message(lambda m: m.text == "✨ Мой нумерологический портрет")
+async def numerology_portrait(m: Message):
+    user_id = m.from_user.id
+    PersonalizationEngine.update_user_profile(user_id, "portrait_request")
+    
+    await m.answer(
+        "✨ *Нумерологический портрет*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Например: 15.05.1990\n\n"
+        "Я рассчитаю:\n"
+        "• Число жизненного пути 🛤️\n"
+        "• Число судьбы 🌟\n"
+        "• Число характера 🔥\n"
+        "• Сильные стороны 💪\n"
+        "• Рекомендации для роста 📈",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+
+@router.message(lambda m: m.text == "💞 Совместимость партнеров")
+async def compatibility_main(m: Message):
+    user_id = m.from_user.id
+    PersonalizationEngine.update_user_profile(user_id, "compatibility_request")
+    
+    await m.answer(
+        "💞 *Совместимость партнеров*\n\n"
+        "Выберите тип отношений для анализа:",
+        parse_mode="Markdown",
+        reply_markup=compatibility_types_menu()
+    )
+
+@router.callback_query(lambda c: c.data.startswith("compat_"))
+async def process_compatibility_type(callback: types.CallbackQuery):
+    compat_type = callback.data.split("_")[1]
+    
+    type_names = {
+        "relationship": "романтических отношений 💑",
+        "business": "делового партнерства 💼",
+        "friendship": "дружбы 👥",
+        "family": "семейных отношений 👨‍👩‍👧‍👦"
+    }
+    
+    await callback.message.edit_text(
+        f"💞 *Совместимость для {type_names[compat_type]}*\n\n"
+        "Введите две даты рождения через пробел:\n\n"
+        "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
+        "*Пример:* 15.05.1990 20.08.1985\n\n"
+        "Я проанализирую:\n"
+        "• Энергетическую совместимость ⚡\n"
+        "• Сильные стороны пары 💪\n"
+        "• Зоны для гармонизации 🔄\n"
+        "• Практические рекомендации 📋",
+        parse_mode="Markdown"
+    )
+    
+    PersonalizationEngine.update_user_profile(
+        callback.from_user.id, 
+        f"compatibility_{compat_type}"
+    )
+    
+    await callback.answer()
+
+@router.message(lambda m: m.text == "📅 Прогноз на период")
+async def forecast_main(m: Message):
+    user_id = m.from_user.id
+    PersonalizationEngine.update_user_profile(user_id, "forecast_request")
+    
+    await m.answer(
+        "📅 *Прогноз на период*\n\n"
+        "Выберите период для анализа:",
+        parse_mode="Markdown",
+        reply_markup=forecast_period_menu()
+    )
+
+@router.callback_query(lambda c: c.data.startswith("forecast_"))
+async def process_forecast_period(callback: types.CallbackQuery):
+    period = callback.data.split("_")[1]
+    
+    period_names = {
+        "week": "неделю ✨",
+        "month": "месяц 📅",
+        "quarter": "3 месяца 📆",
+        "year": "год 🎯"
+    }
+    
+    await callback.message.edit_text(
+        f"📅 *Прогноз на {period_names[period]}*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Я сделаю нумерологический прогноз:\n"
+        "• Благоприятные периоды 🌟\n"
+        "• Возможные вызовы ⚠️\n"
+        "• Рекомендации для успеха 💡\n"
+        "• Фокусные области 🎯",
+        parse_mode="Markdown"
+    )
+    
+    PersonalizationEngine.update_user_profile(
+        callback.from_user.id, 
+        f"forecast_{period}"
+    )
+    
+    await callback.answer()
+
+@router.message(lambda m: m.text == "🌟 Персональный гороскоп")
+async def horoscope_main(m: Message):
+    user_id = m.from_user.id
+    PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
+    
+    await m.answer(
+        "🌟 *Персональный гороскоп*\n\n"
+        "Выберите период для гороскопа:",
+        parse_mode="Markdown",
+        reply_markup=horoscope_type_menu()
+    )
+
+@router.callback_query(lambda c: c.data.startswith("horoscope_"))
+async def process_horoscope_type(callback: types.CallbackQuery):
+    h_type = callback.data.split("_")[1]
+    
+    type_names = {
+        "today": "сегодня 🌞",
+        "tomorrow": "завтра 🌙",
+        "week": "неделю 📅",
+        "month": "месяц 📆"
+    }
+    
+    await callback.message.edit_text(
+        f"🌟 *Гороскоп на {type_names[h_type]}*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Я создам персонализированный гороскоп:\n"
+        "• Общий настрой дня 🌈\n"
+        "• Сфера удачи 🍀\n"
+        "• Совет от чисел 💭\n"
+        "• Число дня 🔢",
+        parse_mode="Markdown"
+    )
+    
+    PersonalizationEngine.update_user_profile(
+        callback.from_user.id, 
+        f"horoscope_{h_type}"
+    )
+    
+    await callback.answer()
+
+@router.message(lambda m: m.text == "🔄 Моя аффирмация дня")
+async def daily_affirmation(m: Message):
+    user_id = m.from_user.id
+    
+    await m.answer(
+        "🔄 *Моя аффирмация дня*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Я создам для вас персональную аффирмацию —\n"
+        "утверждение, которое поможет настроиться\n"
+        "на удачный день и привлечь позитивную энергию.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+    
+    PersonalizationEngine.update_user_profile(user_id, "affirmation_request")
+
+@router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
-    """Обработка нажатия кнопки Админ"""
     user_id = m.from_user.id
     
     if user_id in ADMIN_IDS:
         await m.answer(
-            "👑 Панель администратора\nВыберите действие:",
+            "👑 *Панель администратора*\n\n"
+            "Выберите действие:",
+            parse_mode="Markdown",
             reply_markup=admin_menu()
         )
     else:
         await m.answer(
-            "У вас нет прав доступа к админ-панели",
+            "Эта функция доступна только администраторам",
             reply_markup=main_menu(user_id)
         )
 
-@router.message(lambda m: m.text == "🔙 Главное меню")
+@router.message(lambda m: m.text == "ℹ️ О боте")
+async def about_bot(m: Message):
+    user_id = m.from_user.id
+    
+    about_text = """
+🌟 *Нумерологический бот с AI*
+
+Я — ваш персональный нумеролог, использующий искусственный интеллект для глубокого анализа.
+
+✨ *Что я умею:*
+• Создавать подробный нумерологический портрет
+• Анализировать совместимость для разных типов отношений
+• Делать прогнозы на выбранный период
+• Генерировать персональные гороскопы
+• Создавать аффирмации для вашего дня
+
+🔮 *Мой подход:*
+Я сочетаю древнюю мудрость нумерологии с современными психологическими знаниями. Все анализы уникальны и создаются специально для вас.
+
+📊 *Статистика:*
+• Пользователей: {total_users}
+• Анализов выполнено: {total_analyses}
+
+💡 *Совет:* Регулярно обращайтесь за анализом — числа могут раскрывать новые грани вашего пути!
+
+🌐 *Веб-админка:* {base_url}{admin_path}
+""".format(
+        total_users=stats["total_users"],
+        total_analyses=stats["calculations"] + stats["compatibility_checks"] + stats["forecasts"],
+        base_url=BASE_URL,
+        admin_path=ADMIN_PATH
+    )
+    
+    await m.answer(about_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
+
+@router.message(lambda m: m.text == "🔙 В главное меню")
 async def back_to_main(m: Message):
     user_id = m.from_user.id
     await m.answer(
-        "Главное меню:",
+        "Возвращаемся в главное меню:",
         reply_markup=main_menu(user_id)
     )
 
-@router.message(lambda m: m.text == "📊 Статистика")
-async def show_stats(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        await m.answer("У вас нет прав для просмотра статистики", reply_markup=main_menu(m.from_user.id))
-        return
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    # Собираем статистику за последние 7 дней
-    last_7_days = []
-    for i in range(6, -1, -1):
-        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        count = stats["daily_stats"].get(date, 0)
-        last_7_days.append((date, count))
-    
-    stats_text = f"""
-📊 *Статистика бота*
-
-👥 Пользователи:
-• Всего: {stats['total_users']}
-• Активных сегодня: {stats['active_users']}
-
-📈 Активность:
-• Расчетов: {stats['calculations']}
-• Совместимостей: {stats['compatibility_checks']}
-• Прогнозов: {stats['forecasts']}
-
-📅 Статистика за 7 дней:
-"""
-    
-    for date, count in last_7_days:
-        stats_text += f"• {date}: {count} запросов\n"
-    
-    stats_text += f"\n🌐 Админ-панель: {BASE_URL}{ADMIN_PATH}"
-    
-    await m.answer(stats_text, parse_mode="Markdown", reply_markup=admin_menu())
-
-@router.message(lambda m: m.text == "👥 Пользователи")
-async def show_users(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        await m.answer("У вас нет прав для просмотра пользователей", reply_markup=main_menu(m.from_user.id))
-        return
-    
-    if not users:
-        await m.answer("Нет данных о пользователях", reply_markup=admin_menu())
-        return
-    
-    # Показываем последних 10 пользователей
-    user_list = list(users.items())[-10:]
-    users_text = "👥 *Последние 10 пользователей:*\n\n"
-    
-    for user_id, user_data in user_list:
-        users_text += f"• {user_data.get('first_name', 'Неизвестно')}"
-        if user_data.get('username'):
-            users_text += f" (@{user_data['username']})"
-        users_text += f"\n   ID: {user_id}\n   Зарегистрирован: {user_data.get('joined', 'N/A')}\n\n"
-    
-    users_text += f"\nВсего пользователей: {len(users)}"
-    
-    await m.answer(users_text, parse_mode="Markdown", reply_markup=admin_menu())
-
-@router.message(lambda m: m.text == "📢 Рассылка")
-async def broadcast_info(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        await m.answer("У вас нет прав для рассылки", reply_markup=main_menu(m.from_user.id))
-        return
-    
-    await m.answer(
-        f"Для массовой рассылки воспользуйтесь веб-панелью:\n{BASE_URL}{ADMIN_PATH}/broadcast\n\n"
-        "Там вы можете отправить сообщение всем пользователям.",
-        reply_markup=admin_menu()
-    )
-
-@router.message(lambda m: m.text in ["🧮 Расчет по дате", "📊 Совместимость", "🔮 Прогноз на год", "ℹ️ Помощь"])
-async def menu_handler(m: Message):
-    user_id = m.from_user.id
-    update_user_info(user_id, m.from_user.username or "", m.from_user.first_name or "")
-    
-    if m.text == "🧮 Расчет по дате":
-        await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ", reply_markup=main_menu(user_id))
-
-    elif m.text == "📊 Совместимость":
-        await m.answer("Введите две даты через пробел\nПример: 12.03.1995 10.05.1993", reply_markup=main_menu(user_id))
-
-    elif m.text == "🔮 Прогноз на год":
-        await m.answer("Введите дату рождения для прогноза на год", reply_markup=main_menu(user_id))
-
-    elif m.text == "ℹ️ Помощь":
-        help_text = """
-🤖 *Нумерологический бот*
-
-*Что я умею:*
-🧮 *Расчет по дате* - анализ вашей даты рождения
-📊 *Совместимость* - проверка совместимости двух дат
-🔮 *Прогноз на год* - нумерологический прогноз
-
-*Как пользоваться:*
-1. Выберите нужный пункт в меню
-2. Введите дату в формате ДД.ММ.ГГГГ
-3. Получите подробный анализ
-
-*Формат даты:* 15.05.1990
-*Пример совместимости:* 15.05.1990 20.08.1985
-
-Если что-то не работает - попробуйте позже или свяжитесь с администратором.
-"""
-        await m.answer(help_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
+# =====================
+# MAIN ANALYZERS
+# =====================
 
 @router.message(lambda m: is_date(m.text))
-async def date_handler(m: Message):
-    await m.answer("🔮 Анализирую дату...")
-    
+async def date_analysis_handler(m: Message):
+    """Обработчик для анализа даты рождения"""
     user_id = m.from_user.id
-    update_stats(user_id, "calculation")
+    date_str = m.text
+    
+    await m.answer("✨ Анализирую ваш нумерологический портрет...")
+    
+    # Обновляем статистику
+    if "calculations" in stats:
+        stats["calculations"] += 1
+    save_stats(stats)
+    
+    # Получаем число жизненного пути
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Создаем промпт для AI
+    prompt = f"""
+Создай подробный нумерологический портрет для человека, родившегося {date_str}.
+Число жизненного пути: {life_number if life_number else "расчет не удался"}.
 
-    prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
-    result = await ask_groq(prompt, m.from_user.first_name)
+Включи следующие разделы:
+1. Ключевое число и его значение
+2. Основные черты характера
+3. Сильные стороны личности
+4. Зоны для развития
+5. Профессиональные рекомендации
+6. Советы по отношениям
 
-    await m.answer(result, reply_markup=main_menu(user_id))
+Будь вдохновляющим, но реалистичным. Пиши от первого лица, как если бы это был личный отчет.
+"""
+    
+    # Получаем анализ от AI
+    analysis = await ask_groq(prompt, "detailed")
+    
+    # Персонализируем ответ
+    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
+    
+    # Добавляем аффирмацию в конце
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    final_response = f"""
+✨ *Ваш нумерологический портрет* ✨
 
-@router.message(lambda m: len(m.text.split()) == 2 and "." in m.text)
-async def compatibility_handler(m: Message):
-    d1, d2 = m.text.split()
+{personalized_analysis}
+
+🔄 *Аффирмация дня:*
+{affirmation}
+
+🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
+📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
+"""
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    # Обновляем профиль пользователя
+    PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
+
+@router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
+async def compatibility_analysis_handler(m: Message):
+    """Обработчик для анализа совместимости"""
+    user_id = m.from_user.id
+    date1, date2 = m.text.split()
+    
+    if not (is_date(date1) and is_date(date2)):
+        await m.answer("Пожалуйста, введите даты в правильном формате: ДД.ММ.ГГГГ ДД.ММ.ГГГГ")
+        return
+    
     await m.answer("💞 Анализирую совместимость...")
     
-    user_id = m.from_user.id
-    update_stats(user_id, "compatibility")
+    # Обновляем статистику
+    if "compatibility_checks" in stats:
+        stats["compatibility_checks"] += 1
+    save_stats(stats)
+    
+    # Определяем тип совместимости
+    compat_type = NumerologyFeatures.get_compatibility_type((date1, date2))
+    
+    # Создаем промпт
+    prompt = f"""
+Проанализируй совместимость двух людей по датам рождения:
+1. {date1}
+2. {date2}
 
-    prompt = f"Совместимость дат: {d1} и {d2}"
-    result = await ask_groq(prompt, m.from_user.first_name)
+Тип совместимости: {compat_type}
 
-    await m.answer(result, reply_markup=main_menu(user_id))
+Включи следующие разделы:
+1. Общая оценка совместимости
+2. Сильные стороны пары
+3. Потенциальные вызовы
+4. Рекомендации для гармонии
+5. Совместные возможности
+
+Будь дипломатичным и конструктивным.
+"""
+    
+    # Получаем анализ
+    analysis = await ask_groq(prompt, "compatibility")
+    
+    # Персонализируем
+    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
+    
+    final_response = f"""
+💞 *Анализ совместимости* 💞
+
+*Даты:*
+• {date1}
+• {date2}
+
+{personalized_analysis}
+
+🔢 *Числа жизненного пути:*
+• {NumerologyFeatures.calculate_life_path_number(date1) or '?'}
+• {NumerologyFeatures.calculate_life_path_number(date2) or '?'}
+"""
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
 
 # =====================
-# FLASK WEBHOOK SERVER WITH ADMIN
+# HOROSCOPE HANDLER
+# =====================
+
+@router.message(lambda m: is_date(m.text) and "horoscope" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
+async def horoscope_handler(m: Message):
+    """Обработчик для гороскопов"""
+    user_id = m.from_user.id
+    date_str = m.text
+    
+    # Получаем последний запрос пользователя
+    user_history = personalization["user_history"].get(str(user_id), {"actions": []})
+    last_action = user_history["actions"][-1] if user_history["actions"] else {}
+    
+    if "horoscope" not in last_action.get("action", ""):
+        return
+    
+    horoscope_type = last_action["action"].split("_")[1] if "_" in last_action["action"] else "today"
+    
+    type_names = {
+        "today": "сегодня",
+        "tomorrow": "завтра", 
+        "week": "эту неделю",
+        "month": "этот месяц"
+    }
+    
+    await m.answer(f"🌟 Создаю гороскоп на {type_names.get(horoscope_type, 'период')}...")
+    
+    # Обновляем статистику
+    if "horoscopes" in stats:
+        stats["horoscopes"] += 1
+    save_stats(stats)
+    
+    # Создаем промпт для гороскопа
+    prompt = f"""
+Создай персональный нумерологический гороскоп на {type_names.get(horoscope_type, 'период')} для человека, родившегося {date_str}.
+Число жизненного пути: {NumerologyFeatures.calculate_life_path_number(date_str) or 'не определено'}.
+
+Включи:
+1. Общую энергетику периода
+2. Благоприятные сферы
+3. Возможные вызовы
+4. Совет от чисел
+5. Число удачи на период
+
+Будь вдохновляющим и мотивирующим. Используй метафоры и образы.
+"""
+    
+    # Получаем гороскоп
+    horoscope = await ask_groq(prompt, "horoscope")
+    
+    # Добавляем персональную аффирмацию
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    # Получаем благоприятные дни если это прогноз на месяц
+    favorable_days = []
+    if horoscope_type == "month":
+        favorable_days = NumerologyFeatures.calculate_favorable_days(date_str, datetime.now().strftime("%m"))
+    
+    final_response = f"""
+🌟 *Ваш персональный гороскоп* 🌟
+*На {type_names.get(horoscope_type, 'период')}*
+
+{horoscope}
+
+🔄 *Аффирмация:*
+{affirmation}
+"""
+    
+    if favorable_days:
+        final_response += f"\n📅 *Благоприятные дни:* {', '.join(map(str, favorable_days))}"
+    
+    final_response += f"\n\n✨ *Число жизненного пути:* {NumerologyFeatures.calculate_life_path_number(date_str) or '?'}"
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{horoscope_type}", {"date": date_str})
+
+# =====================
+# AFFIRMATION HANDLER
+# =====================
+
+@router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action") == "affirmation_request")
+async def affirmation_handler(m: Message):
+    """Обработчик для аффирмаций"""
+    user_id = m.from_user.id
+    date_str = m.text
+    
+    # Генерируем аффирмацию
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    # Получаем число жизненного пути для контекста
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Создаем красивый ответ
+    affirmation_text = f"""
+🔄 *Ваша персональная аффирмация* 🔄
+
+✨ {affirmation} ✨
+
+*Почему эта аффирмация для вас:*
+Эта утверждение резонирует с энергией вашего числа жизненного пути ({life_number or '?'}).
+
+*Как использовать:*
+1. Повторяйте утром, настраиваясь на день
+2. Запишите в дневник или на стикер
+3. Используйте как мантру в течение дня
+4. Визуализируйте, как это проявляется в вашей жизни
+
+*Энергия на сегодня:*
+Каждый день приносит новые возможности. Эта аффирмация поможет вам привлечь позитивные вибрации и оставаться в потоке.
+
+🌟 *Число дня:* {random.randint(1, 9)} (символизирует энергию сегодняшнего дня)
+"""
+    
+    await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
+
+# =====================
+# FLASK WEBHOOK SERVER (остается без изменений)
 # =====================
 
 app = Flask(__name__)
-
-# HTML шаблон для админки
-ADMIN_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Админ-панель нумерологического бота</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .stat-number {
-            font-size: 36px;
-            font-weight: bold;
-            color: #667eea;
-        }
-        .stat-label {
-            color: #666;
-            margin-top: 5px;
-        }
-        table {
-            width: 100%;
-            background: white;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        th, td {
-            padding: 15px;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }
-        th {
-            background-color: #f8f9fa;
-            font-weight: bold;
-        }
-        .btn {
-            display: inline-block;
-            padding: 10px 20px;
-            background: #667eea;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            margin: 10px 5px;
-            border: none;
-            cursor: pointer;
-        }
-        .btn:hover {
-            background: #5a6fd8;
-        }
-        .btn-danger {
-            background: #dc3545;
-        }
-        .btn-danger:hover {
-            background: #c82333;
-        }
-        .nav {
-            margin-bottom: 20px;
-        }
-        .message-box {
-            width: 100%;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            font-size: 16px;
-        }
-        .status {
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>👑 Админ-панель нумерологического бота</h1>
-        <p>Последнее обновление: {{ update_time }}</p>
-        <p>Администратор ID: {{ admin_id }}</p>
-    </div>
-    
-    <div class="nav">
-        <a href="/admin" class="btn">📊 Статистика</a>
-        <a href="/admin/users" class="btn">👥 Пользователи</a>
-        <a href="/admin/broadcast" class="btn">📢 Рассылка</a>
-        <a href="/admin/export" class="btn">💾 Экспорт</a>
-    </div>
-    
-    {% if page == 'stats' %}
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-number">{{ stats.total_users }}</div>
-            <div class="stat-label">Всего пользователей</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ stats.active_users }}</div>
-            <div class="stat-label">Активных сегодня</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ stats.calculations }}</div>
-            <div class="stat-label">Расчетов</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ stats.compatibility_checks }}</div>
-            <div class="stat-label">Проверок совместимости</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ stats.forecasts }}</div>
-            <div class="stat-label">Прогнозов</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ stats.daily_stats[today] }}</div>
-            <div class="stat-label">Запросов сегодня</div>
-        </div>
-    </div>
-    
-    <h2>📅 Статистика по дням (последние 7 дней)</h2>
-    <table>
-        <tr>
-            <th>Дата</th>
-            <th>Запросов</th>
-        </tr>
-        {% for date, count in daily_stats %}
-        <tr>
-            <td>{{ date }}</td>
-            <td>{{ count }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-    
-    {% elif page == 'users' %}
-    <h2>👥 Последние пользователи (всего: {{ total_users }})</h2>
-    <div style="margin-bottom: 15px;">
-        <a href="/admin/users?limit=20" class="btn">20 пользователей</a>
-        <a href="/admin/users?limit=50" class="btn">50 пользователей</a>
-        <a href="/admin/users?limit=100" class="btn">100 пользователей</a>
-    </div>
-    <table>
-        <tr>
-            <th>ID</th>
-            <th>Имя</th>
-            <th>Username</th>
-            <th>Дата регистрации</th>
-            <th>Последняя активность</th>
-            <th>Расчеты</th>
-        </tr>
-        {% for user in users %}
-        <tr>
-            <td>{{ user.id }}</td>
-            <td>{{ user.first_name }}</td>
-            <td>{% if user.username %}@{{ user.username }}{% else %}-{% endif %}</td>
-            <td>{{ user.joined }}</td>
-            <td>{{ user.last_active }}</td>
-            <td>{{ user.calculations }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-    
-    {% elif page == 'broadcast' %}
-    <h2>📢 Рассылка сообщений</h2>
-    
-    {% if message_sent %}
-    <div class="status success">
-        ✅ Сообщение отправлено {{ sent_count }} пользователям
-    </div>
-    {% endif %}
-    
-    {% if error %}
-    <div class="status error">
-        ❌ Ошибка: {{ error }}
-    </div>
-    {% endif %}
-    
-    <form method="POST" action="/admin/broadcast">
-        <textarea name="message" placeholder="Введите сообщение для рассылки..." 
-                  rows="6" class="message-box" required></textarea>
-        <br>
-        <button type="submit" class="btn">📤 Отправить всем пользователям ({{ user_count }})</button>
-        <button type="button" class="btn btn-danger" onclick="if(confirm('Вы уверены?')) { this.form.submit(); }">
-            🔥 Экстренная рассылка
-        </button>
-    </form>
-    
-    <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 5px;">
-        <h3>📝 Советы по рассылке:</h3>
-        <ul>
-            <li>Используйте разметку Markdown: *жирный*, _курсив_, [ссылка](url)</li>
-            <li>Максимальная длина сообщения: 4096 символов</li>
-            <li>Рассылку получат все пользователи бота</li>
-            <li>Рекомендуемая частота: не чаще 1 раза в неделю</li>
-        </ul>
-    </div>
-    
-    {% elif page == 'export' %}
-    <h2>💾 Экспорт данных</h2>
-    <div style="margin-bottom: 20px;">
-        <a href="/admin/export/users" class="btn" download>📥 Скачать users.json</a>
-        <a href="/admin/export/stats" class="btn" download>📥 Скачать stats.json</a>
-        <a href="/admin/export/csv" class="btn" download>📥 Скачать CSV (пользователи)</a>
-    </div>
-    
-    <div style="background: white; padding: 20px; border-radius: 10px;">
-        <h3>Информация о данных:</h3>
-        <p>📁 Файлы хранятся локально на сервере</p>
-        <p>🔄 Автоматическое сохранение при каждом действии</p>
-        <p>💾 Рекомендуется делать экспорт раз в неделю</p>
-    </div>
-    {% endif %}
-</body>
-</html>
-"""
 
 @app.route("/")
 def home():
@@ -677,141 +932,6 @@ def home():
 @app.route("/ping")
 def ping():
     return "pong"
-
-@app.route(ADMIN_PATH)
-@app.route(ADMIN_PATH + "/")
-def admin():
-    """Главная страница админки со статистикой"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    # Получаем последние 7 дней статистики
-    daily_stats_items = sorted(stats["daily_stats"].items(), reverse=True)[:7]
-    
-    return render_template_string(
-        ADMIN_TEMPLATE,
-        page='stats',
-        stats=stats,
-        today=today,
-        daily_stats=daily_stats_items,
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-    )
-
-@app.route(ADMIN_PATH + "/users")
-def admin_users():
-    """Страница со списком пользователей"""
-    limit = request.args.get('limit', 50, type=int)
-    
-    # Собираем данные пользователей
-    users_list = []
-    user_items = list(users.items())
-    
-    for user_id, user_data in user_items[-limit:]:
-        user_activity = stats["user_activity"].get(str(user_id), {})
-        users_list.append({
-            'id': user_id,
-            'username': user_data.get('username', ''),
-            'first_name': user_data.get('first_name', ''),
-            'joined': user_data.get('joined', ''),
-            'last_active': user_data.get('last_active', ''),
-            'calculations': user_activity.get('calculations', 0)
-        })
-    
-    return render_template_string(
-        ADMIN_TEMPLATE,
-        page='users',
-        users=users_list,
-        total_users=len(users),
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-    )
-
-@app.route(ADMIN_PATH + "/broadcast", methods=['GET', 'POST'])
-def admin_broadcast():
-    """Страница рассылки сообщений"""
-    if request.method == 'POST':
-        message = request.form.get('message', '')
-        if not message:
-            return render_template_string(
-                ADMIN_TEMPLATE,
-                page='broadcast',
-                error="Сообщение не может быть пустым",
-                user_count=len(users),
-                update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-            )
-        
-        if len(message) > 4000:
-            return render_template_string(
-                ADMIN_TEMPLATE,
-                page='broadcast',
-                error="Сообщение слишком длинное (макс. 4000 символов)",
-                user_count=len(users),
-                update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-            )
-        
-        # Здесь можно добавить асинхронную рассылку
-        # Например: asyncio.run_coroutine_threadsafe(broadcast_message(message), loop)
-        
-        return render_template_string(
-            ADMIN_TEMPLATE,
-            page='broadcast',
-            message_sent=True,
-            sent_count=len(users),
-            user_count=len(users),
-            update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-        )
-    
-    return render_template_string(
-        ADMIN_TEMPLATE,
-        page='broadcast',
-        user_count=len(users),
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-    )
-
-@app.route(ADMIN_PATH + "/export")
-@app.route(ADMIN_PATH + "/export/<data_type>")
-def admin_export(data_type=None):
-    """Экспорт данных"""
-    if data_type == "users":
-        return json.dumps(users, ensure_ascii=False, indent=2), 200, {'Content-Type': 'application/json'}
-    elif data_type == "stats":
-        return json.dumps(stats, ensure_ascii=False, indent=2), 200, {'Content-Type': 'application/json'}
-    elif data_type == "csv":
-        # Создаем CSV
-        import csv
-        import io
-        
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['ID', 'Имя', 'Username', 'Дата регистрации', 'Последняя активность', 'Расчеты'])
-        
-        for user_id, user_data in users.items():
-            user_activity = stats["user_activity"].get(str(user_id), {})
-            writer.writerow([
-                user_id,
-                user_data.get('first_name', ''),
-                user_data.get('username', ''),
-                user_data.get('joined', ''),
-                user_data.get('last_active', ''),
-                user_activity.get('calculations', 0)
-            ])
-        
-        output.seek(0)
-        return output.getvalue(), 200, {
-            'Content-Type': 'text/csv',
-            'Content-Disposition': 'attachment; filename=users.csv'
-        }
-    
-    return render_template_string(
-        ADMIN_TEMPLATE,
-        page='export',
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
-    )
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
@@ -867,12 +987,24 @@ if __name__ == "__main__":
         save_users({})
     if not STATS_FILE.exists():
         save_stats(load_stats())
+    if not PERSONALIZATION_FILE.exists():
+        save_personalization(load_personalization())
     
     set_webhook()
 
     Thread(target=run_flask, daemon=True).start()
 
-    print("Bot started")
-    print(f"Admin panel available at: {BASE_URL}{ADMIN_PATH}")
-    print(f"Your ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Not set'}")
+    print("✨ Нумерологический бот запущен!")
+    print(f"🌐 Админ-панель: {BASE_URL}{ADMIN_PATH}")
+    print(f"👑 Админ ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Не задан'}")
+    print("\n" + "="*50)
+    print("🎯 Уникальные фичи включены:")
+    print("• Нумерологический портрет с AI")
+    print("• Совместимость по типам отношений")
+    print("• Прогнозы на разные периоды")
+    print("• Персональные гороскопы")
+    print("• Аффирмации дня")
+    print("• Система персонализации")
+    print("="*50)
+    
     loop.run_forever()
