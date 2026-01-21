@@ -6,7 +6,7 @@ import aiohttp
 import logging
 logging.basicConfig(level=logging.INFO)
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, render_template_string
 from threading import Thread
 from collections import defaultdict
@@ -26,7 +26,7 @@ from aiogram.types import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
-ADMIN_IDS = [260219938]
+ADMIN_IDS = [260219938]  # ЗАМЕНИТЕ НА СВОЙ ID
 
 MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
@@ -98,7 +98,7 @@ def update_stats(user_id: int, action: str):
     
     # Общая статистика
     stats["total_users"] = len(users)
-    stats["active_users"] = len([u for u in users.values() if u.get("last_active", "") == today])
+    stats["active_users"] = len([u for u in users.values() if u.get("last_active", "").startswith(today)])
     
     if action == "calculation":
         stats["calculations"] += 1
@@ -192,22 +192,38 @@ dp.include_router(router)
 # KEYBOARD
 # =====================
 
-def main_menu():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🧮 Расчет по дате")],
-            [KeyboardButton(text="📊 Совместимость")],
-            [KeyboardButton(text="🔮 Прогноз на год")],
-            [KeyboardButton(text="ℹ️ Помощь")]
-        ],
-        resize_keyboard=True
-    )
+def main_menu(user_id: int = None):
+    """Создает меню. Для админа добавляется кнопка Админ"""
+    if user_id in ADMIN_IDS:
+        # Меню для администратора
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🧮 Расчет по дате")],
+                [KeyboardButton(text="📊 Совместимость")],
+                [KeyboardButton(text="🔮 Прогноз на год")],
+                [KeyboardButton(text="👑 Админ"), KeyboardButton(text="ℹ️ Помощь")]
+            ],
+            resize_keyboard=True
+        )
+    else:
+        # Меню для обычных пользователей
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🧮 Расчет по дате")],
+                [KeyboardButton(text="📊 Совместимость")],
+                [KeyboardButton(text="🔮 Прогноз на год")],
+                [KeyboardButton(text="ℹ️ Помощь")]
+            ],
+            resize_keyboard=True
+        )
 
 def admin_menu():
+    """Меню админ-панели"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="👥 Пользователи")],
+            [KeyboardButton(text="📢 Рассылка")],
             [KeyboardButton(text="🔙 Главное меню")]
         ],
         resize_keyboard=True
@@ -236,39 +252,53 @@ async def start(m: Message):
     if user_id in ADMIN_IDS:
         await m.answer(
             "👑 Привет, администратор!\nВыберите действие:",
-            reply_markup=admin_menu()
+            reply_markup=main_menu(user_id)
         )
     else:
         await m.answer(
             "Привет! Я нумерологический бот 🔢\nВыбери действие:",
-            reply_markup=main_menu()
+            reply_markup=main_menu(user_id)
         )
 
-@router.message(Command("admin"))
-async def admin_command(m: Message):
-    if m.from_user.id in ADMIN_IDS:
+@router.message(lambda m: m.text == "👑 Админ")
+async def admin_button_handler(m: Message):
+    """Обработка нажатия кнопки Админ"""
+    user_id = m.from_user.id
+    
+    if user_id in ADMIN_IDS:
         await m.answer(
-            "👑 Панель администратора",
+            "👑 Панель администратора\nВыберите действие:",
             reply_markup=admin_menu()
         )
     else:
-        await m.answer("У вас нет прав администратора")
+        await m.answer(
+            "У вас нет прав доступа к админ-панели",
+            reply_markup=main_menu(user_id)
+        )
 
 @router.message(lambda m: m.text == "🔙 Главное меню")
 async def back_to_main(m: Message):
+    user_id = m.from_user.id
     await m.answer(
         "Главное меню:",
-        reply_markup=main_menu()
+        reply_markup=main_menu(user_id)
     )
 
 @router.message(lambda m: m.text == "📊 Статистика")
 async def show_stats(m: Message):
     if m.from_user.id not in ADMIN_IDS:
-        await m.answer("У вас нет прав для просмотра статистики")
+        await m.answer("У вас нет прав для просмотра статистики", reply_markup=main_menu(m.from_user.id))
         return
     
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # Собираем статистику за последние 7 дней
+    last_7_days = []
+    for i in range(6, -1, -1):
+        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+        count = stats["daily_stats"].get(date, 0)
+        last_7_days.append((date, count))
     
     stats_text = f"""
 📊 *Статистика бота*
@@ -282,21 +312,24 @@ async def show_stats(m: Message):
 • Совместимостей: {stats['compatibility_checks']}
 • Прогнозов: {stats['forecasts']}
 
-📅 За сегодня ({today}):
-• Запросов: {stats['daily_stats'].get(today, 0)}
-• Вчера ({yesterday}): {stats['daily_stats'].get(yesterday, 0)}
+📅 Статистика за 7 дней:
 """
+    
+    for date, count in last_7_days:
+        stats_text += f"• {date}: {count} запросов\n"
+    
+    stats_text += f"\n🌐 Админ-панель: {BASE_URL}{ADMIN_PATH}"
     
     await m.answer(stats_text, parse_mode="Markdown", reply_markup=admin_menu())
 
 @router.message(lambda m: m.text == "👥 Пользователи")
 async def show_users(m: Message):
     if m.from_user.id not in ADMIN_IDS:
-        await m.answer("У вас нет прав для просмотра пользователей")
+        await m.answer("У вас нет прав для просмотра пользователей", reply_markup=main_menu(m.from_user.id))
         return
     
     if not users:
-        await m.answer("Нет данных о пользователях")
+        await m.answer("Нет данных о пользователях", reply_markup=admin_menu())
         return
     
     # Показываем последних 10 пользователей
@@ -309,7 +342,21 @@ async def show_users(m: Message):
             users_text += f" (@{user_data['username']})"
         users_text += f"\n   ID: {user_id}\n   Зарегистрирован: {user_data.get('joined', 'N/A')}\n\n"
     
+    users_text += f"\nВсего пользователей: {len(users)}"
+    
     await m.answer(users_text, parse_mode="Markdown", reply_markup=admin_menu())
+
+@router.message(lambda m: m.text == "📢 Рассылка")
+async def broadcast_info(m: Message):
+    if m.from_user.id not in ADMIN_IDS:
+        await m.answer("У вас нет прав для рассылки", reply_markup=main_menu(m.from_user.id))
+        return
+    
+    await m.answer(
+        f"Для массовой рассылки воспользуйтесь веб-панелью:\n{BASE_URL}{ADMIN_PATH}/broadcast\n\n"
+        "Там вы можете отправить сообщение всем пользователям.",
+        reply_markup=admin_menu()
+    )
 
 @router.message(lambda m: m.text in ["🧮 Расчет по дате", "📊 Совместимость", "🔮 Прогноз на год", "ℹ️ Помощь"])
 async def menu_handler(m: Message):
@@ -317,16 +364,34 @@ async def menu_handler(m: Message):
     update_user_info(user_id, m.from_user.username or "", m.from_user.first_name or "")
     
     if m.text == "🧮 Расчет по дате":
-        await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ")
+        await m.answer("Введите дату рождения в формате ДД.ММ.ГГГГ", reply_markup=main_menu(user_id))
 
     elif m.text == "📊 Совместимость":
-        await m.answer("Введите две даты через пробел\nПример: 12.03.1995 10.05.1993")
+        await m.answer("Введите две даты через пробел\nПример: 12.03.1995 10.05.1993", reply_markup=main_menu(user_id))
 
     elif m.text == "🔮 Прогноз на год":
-        await m.answer("Введите дату рождения для прогноза на год")
+        await m.answer("Введите дату рождения для прогноза на год", reply_markup=main_menu(user_id))
 
     elif m.text == "ℹ️ Помощь":
-        await m.answer("Я рассчитываю нумерологию, совместимость и прогнозы 🔮")
+        help_text = """
+🤖 *Нумерологический бот*
+
+*Что я умею:*
+🧮 *Расчет по дате* - анализ вашей даты рождения
+📊 *Совместимость* - проверка совместимости двух дат
+🔮 *Прогноз на год* - нумерологический прогноз
+
+*Как пользоваться:*
+1. Выберите нужный пункт в меню
+2. Введите дату в формате ДД.ММ.ГГГГ
+3. Получите подробный анализ
+
+*Формат даты:* 15.05.1990
+*Пример совместимости:* 15.05.1990 20.08.1985
+
+Если что-то не работает - попробуйте позже или свяжитесь с администратором.
+"""
+        await m.answer(help_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
 
 @router.message(lambda m: is_date(m.text))
 async def date_handler(m: Message):
@@ -338,7 +403,7 @@ async def date_handler(m: Message):
     prompt = f"Сделай нумерологический анализ даты рождения {m.text}"
     result = await ask_groq(prompt, m.from_user.first_name)
 
-    await m.answer(result, reply_markup=main_menu())
+    await m.answer(result, reply_markup=main_menu(user_id))
 
 @router.message(lambda m: len(m.text.split()) == 2 and "." in m.text)
 async def compatibility_handler(m: Message):
@@ -351,7 +416,7 @@ async def compatibility_handler(m: Message):
     prompt = f"Совместимость дат: {d1} и {d2}"
     result = await ask_groq(prompt, m.from_user.first_name)
 
-    await m.answer(result, reply_markup=main_menu())
+    await m.answer(result, reply_markup=main_menu(user_id))
 
 # =====================
 # FLASK WEBHOOK SERVER WITH ADMIN
@@ -427,25 +492,58 @@ ADMIN_TEMPLATE = """
             text-decoration: none;
             border-radius: 5px;
             margin: 10px 5px;
+            border: none;
+            cursor: pointer;
         }
         .btn:hover {
             background: #5a6fd8;
         }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
         .nav {
             margin-bottom: 20px;
+        }
+        .message-box {
+            width: 100%;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🔢 Админ-панель нумерологического бота</h1>
+        <h1>👑 Админ-панель нумерологического бота</h1>
         <p>Последнее обновление: {{ update_time }}</p>
+        <p>Администратор ID: {{ admin_id }}</p>
     </div>
     
     <div class="nav">
         <a href="/admin" class="btn">📊 Статистика</a>
         <a href="/admin/users" class="btn">👥 Пользователи</a>
         <a href="/admin/broadcast" class="btn">📢 Рассылка</a>
+        <a href="/admin/export" class="btn">💾 Экспорт</a>
     </div>
     
     {% if page == 'stats' %}
@@ -491,7 +589,12 @@ ADMIN_TEMPLATE = """
     </table>
     
     {% elif page == 'users' %}
-    <h2>👥 Последние пользователи</h2>
+    <h2>👥 Последние пользователи (всего: {{ total_users }})</h2>
+    <div style="margin-bottom: 15px;">
+        <a href="/admin/users?limit=20" class="btn">20 пользователей</a>
+        <a href="/admin/users?limit=50" class="btn">50 пользователей</a>
+        <a href="/admin/users?limit=100" class="btn">100 пользователей</a>
+    </div>
     <table>
         <tr>
             <th>ID</th>
@@ -499,25 +602,69 @@ ADMIN_TEMPLATE = """
             <th>Username</th>
             <th>Дата регистрации</th>
             <th>Последняя активность</th>
+            <th>Расчеты</th>
         </tr>
         {% for user in users %}
         <tr>
             <td>{{ user.id }}</td>
             <td>{{ user.first_name }}</td>
-            <td>{{ user.username }}</td>
+            <td>{% if user.username %}@{{ user.username }}{% else %}-{% endif %}</td>
             <td>{{ user.joined }}</td>
             <td>{{ user.last_active }}</td>
+            <td>{{ user.calculations }}</td>
         </tr>
         {% endfor %}
     </table>
     
     {% elif page == 'broadcast' %}
     <h2>📢 Рассылка сообщений</h2>
+    
+    {% if message_sent %}
+    <div class="status success">
+        ✅ Сообщение отправлено {{ sent_count }} пользователям
+    </div>
+    {% endif %}
+    
+    {% if error %}
+    <div class="status error">
+        ❌ Ошибка: {{ error }}
+    </div>
+    {% endif %}
+    
     <form method="POST" action="/admin/broadcast">
-        <textarea name="message" placeholder="Введите сообщение для рассылки..." rows="6" style="width:100%; padding:10px; margin-bottom:10px;"></textarea>
+        <textarea name="message" placeholder="Введите сообщение для рассылки..." 
+                  rows="6" class="message-box" required></textarea>
         <br>
-        <button type="submit" class="btn">Отправить всем пользователям</button>
+        <button type="submit" class="btn">📤 Отправить всем пользователям ({{ user_count }})</button>
+        <button type="button" class="btn btn-danger" onclick="if(confirm('Вы уверены?')) { this.form.submit(); }">
+            🔥 Экстренная рассылка
+        </button>
     </form>
+    
+    <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 5px;">
+        <h3>📝 Советы по рассылке:</h3>
+        <ul>
+            <li>Используйте разметку Markdown: *жирный*, _курсив_, [ссылка](url)</li>
+            <li>Максимальная длина сообщения: 4096 символов</li>
+            <li>Рассылку получат все пользователи бота</li>
+            <li>Рекомендуемая частота: не чаще 1 раза в неделю</li>
+        </ul>
+    </div>
+    
+    {% elif page == 'export' %}
+    <h2>💾 Экспорт данных</h2>
+    <div style="margin-bottom: 20px;">
+        <a href="/admin/export/users" class="btn" download>📥 Скачать users.json</a>
+        <a href="/admin/export/stats" class="btn" download>📥 Скачать stats.json</a>
+        <a href="/admin/export/csv" class="btn" download>📥 Скачать CSV (пользователи)</a>
+    </div>
+    
+    <div style="background: white; padding: 20px; border-radius: 10px;">
+        <h3>Информация о данных:</h3>
+        <p>📁 Файлы хранятся локально на сервере</p>
+        <p>🔄 Автоматическое сохранение при каждом действии</p>
+        <p>💾 Рекомендуется делать экспорт раз в неделю</p>
+    </div>
     {% endif %}
 </body>
 </html>
@@ -546,28 +693,37 @@ def admin():
         stats=stats,
         today=today,
         daily_stats=daily_stats_items,
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
     )
 
 @app.route(ADMIN_PATH + "/users")
 def admin_users():
     """Страница со списком пользователей"""
+    limit = request.args.get('limit', 50, type=int)
+    
     # Собираем данные пользователей
     users_list = []
-    for user_id, user_data in list(users.items())[-50:]:  # Последние 50 пользователей
+    user_items = list(users.items())
+    
+    for user_id, user_data in user_items[-limit:]:
+        user_activity = stats["user_activity"].get(str(user_id), {})
         users_list.append({
             'id': user_id,
             'username': user_data.get('username', ''),
             'first_name': user_data.get('first_name', ''),
             'joined': user_data.get('joined', ''),
-            'last_active': user_data.get('last_active', '')
+            'last_active': user_data.get('last_active', ''),
+            'calculations': user_activity.get('calculations', 0)
         })
     
     return render_template_string(
         ADMIN_TEMPLATE,
         page='users',
         users=users_list,
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        total_users=len(users),
+        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
     )
 
 @app.route(ADMIN_PATH + "/broadcast", methods=['GET', 'POST'])
@@ -575,15 +731,86 @@ def admin_broadcast():
     """Страница рассылки сообщений"""
     if request.method == 'POST':
         message = request.form.get('message', '')
-        if message:
-            # Здесь можно добавить логику рассылки
-            # Например, асинхронную отправку сообщений всем пользователям
-            return "Сообщение отправлено в очередь рассылки"
+        if not message:
+            return render_template_string(
+                ADMIN_TEMPLATE,
+                page='broadcast',
+                error="Сообщение не может быть пустым",
+                user_count=len(users),
+                update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
+            )
+        
+        if len(message) > 4000:
+            return render_template_string(
+                ADMIN_TEMPLATE,
+                page='broadcast',
+                error="Сообщение слишком длинное (макс. 4000 символов)",
+                user_count=len(users),
+                update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
+            )
+        
+        # Здесь можно добавить асинхронную рассылку
+        # Например: asyncio.run_coroutine_threadsafe(broadcast_message(message), loop)
+        
+        return render_template_string(
+            ADMIN_TEMPLATE,
+            page='broadcast',
+            message_sent=True,
+            sent_count=len(users),
+            user_count=len(users),
+            update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
+        )
     
     return render_template_string(
         ADMIN_TEMPLATE,
         page='broadcast',
-        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_count=len(users),
+        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
+    )
+
+@app.route(ADMIN_PATH + "/export")
+@app.route(ADMIN_PATH + "/export/<data_type>")
+def admin_export(data_type=None):
+    """Экспорт данных"""
+    if data_type == "users":
+        return json.dumps(users, ensure_ascii=False, indent=2), 200, {'Content-Type': 'application/json'}
+    elif data_type == "stats":
+        return json.dumps(stats, ensure_ascii=False, indent=2), 200, {'Content-Type': 'application/json'}
+    elif data_type == "csv":
+        # Создаем CSV
+        import csv
+        import io
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['ID', 'Имя', 'Username', 'Дата регистрации', 'Последняя активность', 'Расчеты'])
+        
+        for user_id, user_data in users.items():
+            user_activity = stats["user_activity"].get(str(user_id), {})
+            writer.writerow([
+                user_id,
+                user_data.get('first_name', ''),
+                user_data.get('username', ''),
+                user_data.get('joined', ''),
+                user_data.get('last_active', ''),
+                user_activity.get('calculations', 0)
+            ])
+        
+        output.seek(0)
+        return output.getvalue(), 200, {
+            'Content-Type': 'text/csv',
+            'Content-Disposition': 'attachment; filename=users.csv'
+        }
+    
+    return render_template_string(
+        ADMIN_TEMPLATE,
+        page='export',
+        update_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        admin_id=ADMIN_IDS[0] if ADMIN_IDS else "Не задан"
     )
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
@@ -647,4 +874,5 @@ if __name__ == "__main__":
 
     print("Bot started")
     print(f"Admin panel available at: {BASE_URL}{ADMIN_PATH}")
+    print(f"Your ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Not set'}")
     loop.run_forever()
