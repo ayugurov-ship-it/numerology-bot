@@ -5,7 +5,7 @@ import requests
 import aiohttp
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, render_template_string
 from threading import Thread
@@ -90,15 +90,31 @@ STATS_FILE = Path("stats.json")
 
 def load_users():
     if USERS_FILE.exists():
-        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        try:
+            return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        except:
+            return {}
     return {}
 
 def save_users(data):
-    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except:
+        pass
 
 def load_stats():
     if STATS_FILE.exists():
-        return json.loads(STATS_FILE.read_text(encoding="utf-8"))
+        try:
+            return json.loads(STATS_FILE.read_text(encoding="utf-8"))
+        except:
+            return {
+                "total_users": 0,
+                "calculations": 0,
+                "compatibility_checks": 0,
+                "forecasts": 0,
+                "horoscopes": 0,
+                "daily_stats": {}
+            }
     return {
         "total_users": 0,
         "calculations": 0,
@@ -109,7 +125,10 @@ def load_stats():
     }
 
 def save_stats(data):
-    STATS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        STATS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except:
+        pass
 
 users = load_users()
 stats = load_stats()
@@ -181,6 +200,9 @@ class NumerologyCalculator:
 # =====================
 
 async def ask_groq(prompt: str, prompt_type: str = "portrait") -> str:
+    if not GROQ_API_KEY:
+        return "⚠️ Сервис временно недоступен. Пожалуйста, попробуйте позже."
+    
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
@@ -202,22 +224,26 @@ async def ask_groq(prompt: str, prompt_type: str = "portrait") -> str:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
-                    return "⚠️ Произошла ошибка. Попробуйте позже."
+                    return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
                     
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return "⚠️ Произошла ошибка. Попробуйте позже."
+        return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже."
 
 # =====================
 # BOT INIT
 # =====================
 
-bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
-router = Router()
-dp.include_router(router)
+try:
+    bot = Bot(BOT_TOKEN)
+    dp = Dispatcher()
+    router = Router()
+    dp.include_router(router)
+except Exception as e:
+    print(f"ERROR initializing bot: {e}")
+    exit(1)
 
 # =====================
 # BEAUTIFUL KEYBOARDS
@@ -472,7 +498,7 @@ async def admin_handler(m: Message):
     # Показываем последних пользователей
     user_items = list(users.items())[-5:]
     for user_id, user_data in user_items:
-        admin_text += f"\n• {user_data.get('first_name', 'Неизвестно')} (@{user_data.get('username', 'нет'})"
+        admin_text += f"\n• {user_data.get('first_name', 'Неизвестно')} (@{user_data.get('username', 'нет')})"
     
     await m.answer(admin_text, parse_mode="Markdown", reply_markup=main_menu(m.from_user.id))
 
@@ -526,7 +552,9 @@ async def process_date(m: Message):
     # Обновляем статистику
     stats["calculations"] = stats.get("calculations", 0) + 1
     today = datetime.now().strftime("%Y-%m-%d")
-    stats["daily_stats"][today] = stats.get("daily_stats", {}).get(today, 0) + 1
+    if "daily_stats" not in stats:
+        stats["daily_stats"] = {}
+    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
     save_stats(stats)
     
     # Получаем число жизненного пути
@@ -576,7 +604,9 @@ async def process_compatibility(m: Message):
     # Обновляем статистику
     stats["compatibility_checks"] = stats.get("compatibility_checks", 0) + 1
     today = datetime.now().strftime("%Y-%m-%d")
-    stats["daily_stats"][today] = stats.get("daily_stats", {}).get(today, 0) + 1
+    if "daily_stats" not in stats:
+        stats["daily_stats"] = {}
+    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
     save_stats(stats)
     
     # Получаем уровень совместимости
@@ -637,7 +667,9 @@ async def process_forecast_or_horoscope(m: Message):
     # Обновляем статистику
     stats["forecasts"] = stats.get("forecasts", 0) + 1
     today = datetime.now().strftime("%Y-%m-%d")
-    stats["daily_stats"][today] = stats.get("daily_stats", {}).get(today, 0) + 1
+    if "daily_stats" not in stats:
+        stats["daily_stats"] = {}
+    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
     save_stats(stats)
     
     # Создаем промпт
@@ -675,11 +707,11 @@ async def process_forecast_or_horoscope(m: Message):
     await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
 
 # =====================
-# AFFIRMATION HANDLER (простая версия)
+# AFFIRMATION HANDLER
 # =====================
 
 @router.message(lambda m: is_date(m.text) and m.reply_to_message and "Аффирмация" in m.reply_to_message.text)
-async def process_affirmation(m: Message):
+async def process_affirmation_special(m: Message):
     """Обработка запроса на аффирмацию"""
     user_id = m.from_user.id
     date_str = m.text
@@ -897,14 +929,17 @@ def admin():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    data = request.get_json()
-    update = types.Update(**data)
+    try:
+        data = request.get_json()
+        update = types.Update(**data)
 
-    asyncio.run_coroutine_threadsafe(
-        dp.feed_update(bot, update),
-        loop
-    )
-    return "ok"
+        asyncio.run_coroutine_threadsafe(
+            dp.feed_update(bot, update),
+            loop
+        )
+        return "ok"
+    except:
+        return "error", 500
 
 # =====================
 # EVENT LOOP
@@ -918,9 +953,12 @@ asyncio.set_event_loop(loop)
 # =====================
 
 def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-    requests.post(url, json={"url": WEBHOOK_URL})
-    print("✅ Webhook set:", WEBHOOK_URL)
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        requests.post(url, json={"url": WEBHOOK_URL})
+        print("✅ Webhook set:", WEBHOOK_URL)
+    except Exception as e:
+        print(f"⚠️ Webhook error: {e}")
 
 # =====================
 # START
@@ -938,8 +976,7 @@ if __name__ == "__main__":
         print("❌ ERROR: BOT_TOKEN is not set!")
         exit(1)
     if not GROQ_API_KEY:
-        print("❌ ERROR: GROQ_API_KEY is not set!")
-        exit(1)
+        print("⚠️ WARNING: GROQ_API_KEY is not set! AI features will not work.")
     if not BASE_URL:
         print("❌ ERROR: BASE_URL is not set!")
         exit(1)
@@ -965,5 +1002,6 @@ if __name__ == "__main__":
     print("4. 📅 Прогноз на период - неделя/месяц/год")
     print("5. 🔄 Аффирмация - персональные утверждения")
     print("="*50)
+    print("\n📊 Статус: Ожидание запросов...")
     
     loop.run_forever()
