@@ -1,24 +1,30 @@
 import os
 import json
 import asyncio
-import requests
 import aiohttp
 import logging
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Flask, request, render_template_string
 from threading import Thread
 
-from aiogram import Bot, Dispatcher, Router, types
-from aiogram.filters import CommandStart
-from aiogram.types import (
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
+try:
+    import requests
+    from flask import Flask, request, render_template_string
+    from aiogram import Bot, Dispatcher, Router, types
+    from aiogram.filters import CommandStart
+    from aiogram.types import (
+        ReplyKeyboardMarkup,
+        KeyboardButton,
+        Message,
+        InlineKeyboardMarkup,
+        InlineKeyboardButton
+    )
+except ImportError as e:
+    print(f"❌ Ошибка импорта: {e}")
+    print("📦 Устанавливаем зависимости...")
+    print("Запустите: pip install -r requirements.txt")
+    exit(1)
 
 # =====================
 # CONFIG
@@ -26,7 +32,7 @@ from aiogram.types import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BASE_URL = os.getenv("BASE_URL")
+BASE_URL = os.getenv("BASE_URL", "https://numerology-bot.onrender.com")
 ADMIN_IDS = [260219938]  # Ваш ID
 
 MODEL_NAME = "llama-3.1-8b-instant"
@@ -242,7 +248,7 @@ try:
     router = Router()
     dp.include_router(router)
 except Exception as e:
-    print(f"ERROR initializing bot: {e}")
+    print(f"❌ ERROR initializing bot: {e}")
     exit(1)
 
 # =====================
@@ -656,13 +662,65 @@ async def process_compatibility(m: Message):
 async def process_forecast_or_horoscope(m: Message):
     """Обработка прогнозов и гороскопов"""
     user_id = m.from_user.id
-    
-    # Проверяем, что это запрос на гороскоп или прогноз
-    # (для простоты обрабатываем как прогноз)
-    
     date_str = m.text.split()[0]
     
-    await m.answer("🌟 Создаю нумерологический прогноз...")
+    # Определяем тип запроса по контексту
+    if "завтра" in m.text.lower() or "сегодня" in m.text.lower() or "неделя" in m.text.lower() or "месяц" in m.text.lower():
+        # Это гороскоп
+        await process_horoscope_simple(m, date_str, user_id)
+    else:
+        # Это прогноз
+        await process_forecast_simple(m, date_str, user_id)
+
+async def process_horoscope_simple(m: Message, date_str: str, user_id: int):
+    """Упрощенный обработчик гороскопа"""
+    await m.answer("🌟 Создаю нумерологический гороскоп...")
+    
+    # Обновляем статистику
+    stats["horoscopes"] = stats.get("horoscopes", 0) + 1
+    today = datetime.now().strftime("%Y-%m-%d")
+    if "daily_stats" not in stats:
+        stats["daily_stats"] = {}
+    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
+    save_stats(stats)
+    
+    # Создаем промпт
+    prompt = f"""
+Создай нумерологический гороскоп на сегодня для человека, родившегося {date_str}.
+Число жизненного пути: {NumerologyCalculator.calculate_life_path(date_str) or 'не определено'}.
+
+Включи:
+1. Общую атмосферу дня
+2. Сферу удачи
+3. Совет от чисел
+4. Что следует делать сегодня
+5. Чего лучше избегать
+"""
+    
+    horoscope = await ask_groq(prompt, "horoscope")
+    
+    # Добавляем аффирмацию
+    affirmation = NumerologyCalculator.generate_affirmation(date_str)
+    
+    response = f"""
+🌟 *Ваш нумерологический гороскоп* 🌟
+
+*Дата рождения:* {date_str}
+*Период:* сегодня
+
+{horoscope}
+
+🔄 *Аффирмация дня:*
+{affirmation}
+
+✨ *Число жизненного пути:* {NumerologyCalculator.calculate_life_path(date_str) or '?'}
+"""
+    
+    await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+
+async def process_forecast_simple(m: Message, date_str: str, user_id: int):
+    """Упрощенный обработчик прогноза"""
+    await m.answer("📅 Создаю нумерологический прогноз...")
     
     # Обновляем статистику
     stats["forecasts"] = stats.get("forecasts", 0) + 1
@@ -674,7 +732,7 @@ async def process_forecast_or_horoscope(m: Message):
     
     # Создаем промпт
     prompt = f"""
-Создай нумерологический прогноз для человека, родившегося {date_str}.
+Создай нумерологический прогноз на месяц для человека, родившегося {date_str}.
 Число жизненного пути: {NumerologyCalculator.calculate_life_path(date_str) or 'не определено'}.
 
 Сделай прогноз на ближайший месяц, включив:
@@ -691,7 +749,7 @@ async def process_forecast_or_horoscope(m: Message):
     affirmation = NumerologyCalculator.generate_affirmation(date_str)
     
     response = f"""
-🌟 *Ваш нумерологический прогноз* 🌟
+📅 *Ваш нумерологический прогноз* 📅
 
 *Дата рождения:* {date_str}
 *Период:* ближайший месяц
@@ -755,6 +813,15 @@ def home():
 @app.route("/ping")
 def ping():
     return "pong"
+
+@app.route("/health")
+def health():
+    return {
+        "status": "healthy",
+        "bot": BOT_TOKEN is not None,
+        "users": len(users),
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.route("/admin")
 def admin():
@@ -966,7 +1033,7 @@ def set_webhook():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=False)
 
 if __name__ == "__main__":
     print("🚀 Starting Numerology Bot...")
@@ -980,6 +1047,11 @@ if __name__ == "__main__":
     if not BASE_URL:
         print("❌ ERROR: BASE_URL is not set!")
         exit(1)
+    
+    print(f"✅ BOT_TOKEN: {'Set' if BOT_TOKEN else 'Not set'}")
+    print(f"✅ GROQ_API_KEY: {'Set' if GROQ_API_KEY else 'Not set'}")
+    print(f"✅ BASE_URL: {BASE_URL}")
+    print(f"✅ ADMIN_IDS: {ADMIN_IDS}")
     
     # Создаем файлы если их нет
     if not USERS_FILE.exists():
