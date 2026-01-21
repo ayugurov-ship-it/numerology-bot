@@ -26,7 +26,7 @@ from aiogram.types import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
-ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "260219938").split(","))) if os.getenv("ADMIN_IDS") else []
+ADMIN_IDS = [260219938]
 
 MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
