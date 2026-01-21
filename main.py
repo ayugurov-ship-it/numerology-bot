@@ -32,7 +32,7 @@ except ImportError as e:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BASE_URL = os.getenv("BASE_URL", "https://numerology-bot.onrender.com")
+BASE_URL = os.getenv("BASE_URL", "https://numerology-bot-m48t.onrender.com")
 ADMIN_IDS = [260219938]  # Ваш ID
 
 MODEL_NAME = "llama-3.1-8b-instant"
@@ -599,11 +599,12 @@ async def process_date(m: Message):
     
     await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
 
-@router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()[:2]))
+@router.message(lambda m: m.text and len(m.text.split()) == 2 and all(is_date(part) for part in m.text.split()[:2]))
 async def process_compatibility(m: Message):
     """Обработка совместимости"""
     user_id = m.from_user.id
-    date1, date2 = m.text.split()[:2]
+    parts = m.text.split()
+    date1, date2 = parts[0], parts[1]
     
     await m.answer("💞 Анализирую совместимость...")
     
@@ -658,118 +659,51 @@ async def process_compatibility(m: Message):
 # FORECAST & HOROSCOPE HANDLERS
 # =====================
 
-@router.message(lambda m: m.text and is_date(m.text.split()[0]))
-async def process_forecast_or_horoscope(m: Message):
-    """Обработка прогнозов и гороскопов"""
-    user_id = m.from_user.id
-    date_str = m.text
+@router.callback_query(lambda c: c.data.startswith("horoscope_"))
+async def handle_horoscope_callback(callback: types.CallbackQuery):
+    """Обработка выбора периода для гороскопа"""
+    period = callback.data.split("_")[1]
     
-    # Определяем тип запроса по контексту
-    text_lower = m.text.lower()
-    if any(word in text_lower for word in ["завтра", "сегодня", "неделя", "месяц", "гороскоп"]):
-        # Это гороскоп
-        await process_horoscope_simple(m, date_str, user_id)
-    else:
-        # Это прогноз
-        await process_forecast_simple(m, date_str, user_id)
-
-async def process_horoscope_simple(m: Message, date_str: str, user_id: int):
-    """Упрощенный обработчик гороскопа"""
-    await m.answer("🌟 Создаю нумерологический гороскоп...")
+    period_names = {
+        "today": "сегодня 🌞",
+        "tomorrow": "завтра 🌙", 
+        "week": "неделю 📅",
+        "month": "месяц 📆"
+    }
     
-    # Обновляем статистику
-    stats["horoscopes"] = stats.get("horoscopes", 0) + 1
-    today = datetime.now().strftime("%Y-%m-%d")
-    if "daily_stats" not in stats:
-        stats["daily_stats"] = {}
-    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
-    save_stats(stats)
+    await callback.message.answer(
+        f"🌟 *Гороскоп на {period_names[period]}*\n\n"
+        "Введите вашу дату рождения:\n\n"
+        "*Формат:* ДД.ММ.ГГГГ\n"
+        "*Пример:* 15.05.1990\n\n"
+        "Я создам персонализированный нумерологический гороскоп.",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data.startswith("period_"))
+async def handle_forecast_callback(callback: types.CallbackQuery):
+    """Обработка выбора периода для прогноза"""
+    period = callback.data.split("_")[1]
     
-    # Создаем промпт
-    prompt = f"""
-Создай нумерологический гороскоп на сегодня для человека, родившегося {date_str}.
-Число жизненного пути: {NumerologyCalculator.calculate_life_path(date_str) or 'не определено'}.
-
-Включи:
-1. Общую атмосферу дня
-2. Сферу удачи
-3. Совет от чисел
-4. Что следует делать сегодня
-5. Чего лучше избегать
-"""
+    period_names = {
+        "week": "неделю ✨",
+        "month": "месяц 📅", 
+        "quarter": "3 месяца 📆",
+        "year": "год 🎯"
+    }
     
-    horoscope = await ask_groq(prompt, "horoscope")
-    
-    # Добавляем аффирмацию
-    affirmation = NumerologyCalculator.generate_affirmation(date_str)
-    
-    response = f"""
-🌟 *Ваш нумерологический гороскоп* 🌟
+    await callback.message.answer(
+        f"📅 *Прогноз на {period_names[period]}*\n\n"
+        "Введите вашу дату рождения:\n\n"
+        "*Формат:* ДД.ММ.ГГГГ\n"
+        "*Пример:* 15.05.1990\n\n"
+        "Я сделаю нумерологический прогноз для выбранного периода.",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
-*Дата рождения:* {date_str}
-*Период:* сегодня
-
-{horoscope}
-
-🔄 *Аффирмация дня:*
-{affirmation}
-
-✨ *Число жизненного пути:* {NumerologyCalculator.calculate_life_path(date_str) or '?'}
-"""
-    
-    await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-
-async def process_forecast_simple(m: Message, date_str: str, user_id: int):
-    """Упрощенный обработчик прогноза"""
-    await m.answer("📅 Создаю нумерологический прогноз...")
-    
-    # Обновляем статистику
-    stats["forecasts"] = stats.get("forecasts", 0) + 1
-    today = datetime.now().strftime("%Y-%m-%d")
-    if "daily_stats" not in stats:
-        stats["daily_stats"] = {}
-    stats["daily_stats"][today] = stats["daily_stats"].get(today, 0) + 1
-    save_stats(stats)
-    
-    # Создаем промпт
-    prompt = f"""
-Создай нумерологический прогноз на месяц для человека, родившегося {date_str}.
-Число жизненного пути: {NumerologyCalculator.calculate_life_path(date_str) or 'не определено'}.
-
-Сделай прогноз на ближайший месяц, включив:
-1. Общую энергетику периода
-2. Благоприятные возможности
-3. Возможные вызовы
-4. Рекомендации для успеха
-5. Фокусные области для развития
-"""
-    
-    forecast = await ask_groq(prompt, "forecast")
-    
-    # Добавляем аффирмацию
-    affirmation = NumerologyCalculator.generate_affirmation(date_str)
-    
-    response = f"""
-📅 *Ваш нумерологический прогноз* 📅
-
-*Дата рождения:* {date_str}
-*Период:* ближайший месяц
-
-{forecast}
-
-🔄 *Аффирмация:*
-{affirmation}
-
-✨ *Число жизненного пути:* {NumerologyCalculator.calculate_life_path(date_str) or '?'}
-"""
-    
-    await m.answer(response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-
-# =====================
-# AFFIRMATION HANDLER
-# =====================
-
-@router.message(lambda m: is_date(m.text))
+@router.message(lambda m: m.text and is_date(m.text))
 async def process_affirmation(m: Message):
     """Обработка запроса на аффирмацию"""
     user_id = m.from_user.id
@@ -995,8 +929,11 @@ def admin():
     
     return html
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
+@app.route(WEBHOOK_PATH, methods=["POST", "GET"])
 def webhook():
+    if request.method == "GET":
+        return "Webhook is working!", 200
+    
     try:
         data = request.get_json()
         update = types.Update(**data)
@@ -1006,7 +943,8 @@ def webhook():
             loop
         )
         return "ok"
-    except:
+    except Exception as e:
+        print(f"Webhook error: {e}")
         return "error", 500
 
 # =====================
@@ -1020,11 +958,27 @@ asyncio.set_event_loop(loop)
 # WEBHOOK SETUP
 # =====================
 
-def set_webhook():
+def delete_and_set_webhook():
+    """Удалить старый webhook и установить новый"""
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-        requests.post(url, json={"url": WEBHOOK_URL})
-        print("✅ Webhook set:", WEBHOOK_URL)
+        # Удаляем старый webhook
+        delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        requests.post(delete_url, json={"drop_pending_updates": True})
+        print("✅ Старый webhook удален")
+        
+        # Ждем секунду
+        import time
+        time.sleep(1)
+        
+        # Устанавливаем новый
+        set_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        data = {
+            "url": WEBHOOK_URL,
+            "drop_pending_updates": True
+        }
+        response = requests.post(set_url, json=data)
+        print(f"✅ Новый webhook установлен: {WEBHOOK_URL}")
+        print(f"✅ Ответ Telegram: {response.json()}")
     except Exception as e:
         print(f"⚠️ Webhook error: {e}")
 
@@ -1034,7 +988,7 @@ def set_webhook():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
 
 if __name__ == "__main__":
     print("🚀 Starting Numerology Bot...")
@@ -1060,7 +1014,8 @@ if __name__ == "__main__":
     if not STATS_FILE.exists():
         save_stats(load_stats())
     
-    set_webhook()
+    # Устанавливаем webhook
+    delete_and_set_webhook()
 
     Thread(target=run_flask, daemon=True).start()
 
