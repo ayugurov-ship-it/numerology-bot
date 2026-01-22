@@ -759,7 +759,6 @@ final_response = f"""
 • {NumerologyFeatures.calculate_life_path_number(date1) or '?'}
 • {NumerologyFeatures.calculate_life_path_number(date2) or '?'}
 """
-    
     await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
     PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
