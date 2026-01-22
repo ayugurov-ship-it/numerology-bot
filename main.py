@@ -717,7 +717,7 @@ async def compatibility_analysis_handler(m: Message):
     compat_type = NumerologyFeatures.get_compatibility_type((date1, date2))
 
 # Создаем промпт для общего анализа
-prompt = f"""
+    prompt = f"""
 Проанализируй общую совместимость двух людей по датам рождения:
 1. {date1}
 2. {date2}
@@ -739,6 +739,7 @@ prompt = f"""
 Будь дипломатичным, конструктивным и давай практические, реалистичные советы.
 Акцент на отношения в целом, без разделения на романтику/дружбу/бизнес.
 """
+
 # Получаем анализ
     analysis = await ask_groq(prompt, "compatibility")
     
