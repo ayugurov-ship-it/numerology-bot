@@ -714,7 +714,6 @@ async def compatibility_analysis_handler(m: Message):
     save_stats(stats)
     
     # Определяем тип совместимости для внутренней логики (можно оставить)
-    compat_type = NumerologyFeatures.get_compatibility_type((date1, date2))
 
 # Создаем промпт для общего анализа
     prompt = f"""
