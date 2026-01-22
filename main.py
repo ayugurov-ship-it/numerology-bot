@@ -741,10 +741,10 @@ prompt = f"""
 """
     
     # Получаем анализ
-   analysis = await ask_groq(prompt, "compatibility")
+analysis = await ask_groq(prompt, "compatibility")
     
     # Персонализируем
-   personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
+personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
     
     final_response = f"""
 💞 *Анализ совместимости* 💞
