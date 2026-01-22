@@ -29,7 +29,7 @@ from aiogram.types import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
-ADMIN_IDS = [123456789]  # ЗАМЕНИТЕ НА СВОЙ ID
+ADMIN_IDS = [260219938]  # ЗАМЕНИТЕ НА СВОЙ ID
 
 MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
@@ -741,10 +741,10 @@ prompt = f"""
 """
     
     # Получаем анализ
-    analysis = await ask_groq(prompt, "compatibility")
+   analysis = await ask_groq(prompt, "compatibility")
     
     # Персонализируем
-    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
+   personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
     
     final_response = f"""
 💞 *Анализ совместимости* 💞
