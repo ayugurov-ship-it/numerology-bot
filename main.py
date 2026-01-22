@@ -762,7 +762,7 @@ final_response = f"""
     
 await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
-    PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
+PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
 
 # =====================
 # HOROSCOPE HANDLER
