@@ -714,7 +714,7 @@ async def compatibility_analysis_handler(m: Message):
     save_stats(stats)
     
     # Определяем тип совместимости для внутренней логики (можно оставить)
-compat_type = NumerologyFeatures.get_compatibility_type((date1, date2))
+    compat_type = NumerologyFeatures.get_compatibility_type((date1, date2))
 
 # Создаем промпт для общего анализа
 prompt = f"""
@@ -739,12 +739,11 @@ prompt = f"""
 Будь дипломатичным, конструктивным и давай практические, реалистичные советы.
 Акцент на отношения в целом, без разделения на романтику/дружбу/бизнес.
 """
-    
-    # Получаем анализ
-analysis = await ask_groq(prompt, "compatibility")
+# Получаем анализ
+    analysis = await ask_groq(prompt, "compatibility")
     
     # Персонализируем
-personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
+    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
     
 final_response = f"""
 💞 *Анализ совместимости* 💞
@@ -760,9 +759,9 @@ final_response = f"""
 • {NumerologyFeatures.calculate_life_path_number(date2) or '?'}
 """
     
-await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
-PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
+    PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
 
 # =====================
 # HOROSCOPE HANDLER
