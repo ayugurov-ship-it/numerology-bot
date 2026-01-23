@@ -1190,6 +1190,52 @@ async def affirmation_handler(m: Message):
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
 
+# ... ваш существующий код ...
+
+@router.message(lambda m: is_date(m.text) and "horoscope" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
+async def horoscope_handler(m: Message):
+    # ... существующий код ...
+
+@router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action") == "affirmation_request")
+async def affirmation_handler(m: Message):
+    # ... существующий код ...
+
+# =====================
+# ALL OTHER MESSAGES HANDLER (ДОБАВЬТЕ ЭТОТ КОД ЗДЕСЬ)
+# =====================
+
+@router.message()
+async def handle_all_other_messages(m: Message):
+    """Обработчик всех сообщений, которые не обработаны другими фильтрами"""
+    user_id = m.from_user.id
+    text = m.text
+    
+    # Обработка кнопок главного меню
+    if text == "✨ Мой нумерологический портрет":
+        await numerology_portrait(m)
+    elif text == "💞 Совместимость партнеров":
+        await compatibility_main(m)
+    elif text == "📅 Прогноз на период":
+        await forecast_main(m)
+    elif text == "🌟 Персональный гороскоп":
+        await horoscope_main(m)
+    elif text == "🔄 Моя аффирмация дня":
+        await daily_affirmation(m)
+    elif text == "👑 Админ-панель":
+        await admin_button_handler(m)
+    elif text == "ℹ️ О боте":
+        await about_bot(m)
+    elif text == "🔙 В главное меню":
+        await back_to_main(m)
+    elif text in ["📊 Статистика", "👥 Пользователи", "📢 Рассылка"] and user_id in ADMIN_IDS:
+        await m.answer("Админ-панель в разработке", reply_markup=admin_menu())
+    else:
+        # Если сообщение не распознано как команда
+        await m.answer(
+            "Пожалуйста, используйте кнопки меню ниже 👇",
+            reply_markup=main_menu(user_id)
+        )
+
 # =====================
 # FLASK WEBHOOK SERVER (остается без изменений)
 # =====================
