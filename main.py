@@ -529,9 +529,9 @@ async def handle_date_choice(callback: types.CallbackQuery):
         
         # В зависимости от типа анализа вызываем нужный обработчик
         if pending_action == "portrait":
-    msg = callback.message
-    msg.text = saved_date
-    await date_analysis_handler(msg)
+        msg = callback.message
+        msg.text = saved_date
+        await date_analysis_handler(msg)
             
         elif pending_action == "forecast":
             # Сохраняем выбранную дату для прогноза и показываем меню периодов
