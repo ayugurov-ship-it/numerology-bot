@@ -511,66 +511,30 @@ async def numerology_portrait(m: Message):
             reply_markup=main_menu(user_id)
         )
 
-@router.callback_query(lambda c: c.data in ["use_saved_date", "enter_new_date"])
+@router.callback_query(lambda c: c.data in ["use_saved_birthdate", "enter_new_birthdate"])
 async def handle_date_choice(callback: types.CallbackQuery):
-    """Обработчик выбора да/нет для сохранённой даты"""
     user_id = callback.from_user.id
-    choice = callback.data
-    
-    # Получаем сохранённую дату и информацию о pending action
-    saved_date = get_saved_birth_date(user_id)
-    user_data = personalization["user_history"].get(str(user_id), {})
-    pending_action = user_data.get("pending_action", "portrait")
-    
-    if choice == "use_saved_date" and saved_date:
-        # Используем сохранённую дату
-        await callback.message.edit_text(f"✨ Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
-        await asyncio.sleep(1)
-        
-        # В зависимости от типа анализа вызываем нужный обработчик
-        if pending_action == "portrait":
+
+    if callback.data == "use_saved_birthdate":
+        await callback.message.answer("⏳ Обрабатываю...")
+
+        saved_date = get_saved_birth_date(user_id)
+
+        if not saved_date:
+            await callback.message.answer("Сохранённая дата не найдена. Введите дату вручную.")
+            await callback.answer()
+            return
+
         msg = callback.message
         msg.text = saved_date
+
         await date_analysis_handler(msg)
-            
-        elif pending_action == "forecast":
-            # Сохраняем выбранную дату для прогноза и показываем меню периодов
-            user_data["pending_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer(
-                f"📅 Использую дату: *{saved_date}*\n\n"
-                "Теперь выберите период для прогноза:",
-                parse_mode="Markdown",
-                reply_markup=forecast_period_menu()
-            )
-            
-        elif pending_action == "horoscope":
-            # Сохраняем выбранную дату для гороскопа и показываем меню периодов
-            user_data["pending_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer(
-                f"🌟 Использую дату: *{saved_date}*\n\n"
-                "Теперь выберите период для гороскопа:",
-                parse_mode="Markdown",
-                reply_markup=horoscope_type_menu()
-            )
-            
-        elif pending_action == "affirmation":
-    msg = callback.message
-    msg.text = saved_date
-    await affirmation_handler(msg)
-            
-        elif pending_action == "compatibility":
-            # Сохраняем первую дату для совместимости
-            user_data["pending_compatibility_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer(
-                f"💞 Использую дату: *{saved_date}* как первую дату\n\n"
-                "Теперь введите *вторую дату* рождения в формате ДД.ММ.ГГГГ:\n\n"
-                "Например: 20.08.1985",
-                parse_mode="Markdown",
-                reply_markup=main_menu(user_id)
-            )
+
+    else:
+        await callback.message.answer("✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ")
+
+    await callback.answer()
+
     
     else:  # enter_new_date
         await callback.message.edit_text(
