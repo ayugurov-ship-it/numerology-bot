@@ -392,7 +392,8 @@ def format_user_name(user: types.User) -> str:
     if user.last_name:
         name_parts.append(user.last_name)
     return " ".join(name_parts) if name_parts else "Дорогой друг"
-    def get_saved_birth_date(user_id: int):
+
+def get_saved_birth_date(user_id: int):
     return personalization["user_history"].get(str(user_id), {}).get("birth_date")
 
 def save_birth_date(user_id: int, date_str: str):
