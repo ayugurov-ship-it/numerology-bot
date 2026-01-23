@@ -1148,6 +1148,44 @@ async def horoscope_handler(m: Message):
     
     PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{horoscope_type}", {"date": date_str})
 
+@router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action") == "affirmation_request")
+async def affirmation_handler(m: Message):
+    """Обработчик для аффирмаций"""
+    user_id = m.from_user.id
+    date_str = m.text
+    save_birth_date(user_id, date_str)
+    
+    # Генерируем аффирмацию
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    # Получаем число жизненного пути для контекста
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Создаем красивый ответ
+    affirmation_text = f"""
+🔄 *Ваша персональная аффирмация* 🔄
+
+✨ {affirmation} ✨
+
+*Почему эта аффирмация для вас:*
+Эта утверждение резонирует с энергией вашего числа жизненного пути ({life_number or '?'}).
+
+*Как использовать:*
+1. Повторяйте утром, настраиваясь на день
+2. Запишите в дневник или на стикер
+3. Используйте как мантру в течение дня
+4. Визуализируйте, как это проявляется в вашей жизни
+
+*Энергия на сегодня:*
+Каждый день приносит новые возможности. Эта аффирмация поможет вам привлечь позитивные вибрации и оставаться в потоке.
+
+🌟 *Число дня:* {random.randint(1, 9)} (символизирует энергию сегодняшнего дня)
+"""
+    
+    await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
+
 # =====================
 # AFFIRMATION HANDLER
 # =====================
