@@ -530,25 +530,19 @@ async def handle_date_choice(callback: types.CallbackQuery):
 
         await date_analysis_handler(msg)
 
-    else:
-        await callback.message.answer("✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ")
-
-    await callback.answer()
-
-    
-    else:  # enter_new_date
+    else:  # enter_new_birthdate
         await callback.message.edit_text(
             "✏️ Хорошо, введите новую дату рождения в формате *ДД.ММ.ГГГГ*\n\n"
             "Например: 15.05.1990\n\n"
             "Или выберите другое действие из меню ниже 👇",
             parse_mode="Markdown"
         )
-    
-    # Очищаем pending action
+
+    # очищаем pending_action
     if str(user_id) in personalization["user_history"]:
         personalization["user_history"][str(user_id)].pop("pending_action", None)
         save_personalization(personalization)
-    
+
     await callback.answer()
 
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
