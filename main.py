@@ -511,57 +511,6 @@ async def numerology_portrait(m: Message):
             reply_markup=main_menu(user_id)
         )
 
-@router.callback_query(lambda c: c.data in ["use_saved_date", "enter_new_date"])
-async def handle_date_choice(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user_data = personalization["user_history"].get(str(user_id), {})
-    pending_action = user_data.get("pending_action")
-
-    if callback.data == "use_saved_date":
-        await callback.message.answer("⏳ Обрабатываю...")
-
-        saved_date = get_saved_birth_date(user_id)
-        if not saved_date:
-            await callback.message.answer("❌ Сохранённая дата не найдена. Введите дату вручную.")
-            await callback.answer()
-            return
-
-        fake_msg = callback.message
-        fake_msg.text = saved_date
-
-        # маршрутизация по типу запроса
-        if pending_action == "portrait":
-            await date_analysis_handler(fake_msg)
-
-        elif pending_action == "compatibility":
-            user_data["pending_compatibility_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer("Введите дату рождения партнёра:")
-
-        elif pending_action == "forecast":
-            user_data["pending_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer("Выберите период прогноза:", reply_markup=forecast_period_menu())
-
-        elif pending_action == "horoscope":
-            await callback.message.answer("Выберите период гороскопа:", reply_markup=horoscope_type_menu())
-
-        elif pending_action == "affirmation":
-            await affirmation_handler(fake_msg)
-
-        else:
-            await callback.message.answer("⚠️ Не удалось определить тип анализа. Попробуйте снова.")
-
-    else:
-        await callback.message.answer("✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ")
-
-    # очистка состояния
-    if str(user_id) in personalization["user_history"]:
-        personalization["user_history"][str(user_id)].pop("pending_action", None)
-        save_personalization(personalization)
-
-    await callback.answer()
-
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
 async def compatibility_main(m: Message):
     user_id = m.from_user.id
@@ -815,6 +764,57 @@ async def daily_affirmation(m: Message):
         )
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_request")
+
+@router.callback_query(lambda c: c.data in ["use_saved_date", "enter_new_date"])
+async def handle_date_choice(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user_data = personalization["user_history"].get(str(user_id), {})
+    pending_action = user_data.get("pending_action")
+
+    if callback.data == "use_saved_date":
+        await callback.message.answer("⏳ Обрабатываю...")
+
+        saved_date = get_saved_birth_date(user_id)
+        if not saved_date:
+            await callback.message.answer("❌ Сохранённая дата не найдена. Введите дату вручную.")
+            await callback.answer()
+            return
+
+        fake_msg = callback.message
+        fake_msg.text = saved_date
+
+        # маршрутизация по типу запроса
+        if pending_action == "portrait":
+            await date_analysis_handler(fake_msg)
+
+        elif pending_action == "compatibility":
+            user_data["pending_compatibility_date"] = saved_date
+            save_personalization(personalization)
+            await callback.message.answer("Введите дату рождения партнёра:")
+
+        elif pending_action == "forecast":
+            user_data["pending_date"] = saved_date
+            save_personalization(personalization)
+            await callback.message.answer("Выберите период прогноза:", reply_markup=forecast_period_menu())
+
+        elif pending_action == "horoscope":
+            await callback.message.answer("Выберите период гороскопа:", reply_markup=horoscope_type_menu())
+
+        elif pending_action == "affirmation":
+            await affirmation_handler(fake_msg)
+
+        else:
+            await callback.message.answer("⚠️ Не удалось определить тип анализа. Попробуйте снова.")
+
+    else:
+        await callback.message.answer("✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ")
+
+    # очистка состояния
+    if str(user_id) in personalization["user_history"]:
+        personalization["user_history"][str(user_id)].pop("pending_action", None)
+        save_personalization(personalization)
+
+    await callback.answer()
 
 @router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
