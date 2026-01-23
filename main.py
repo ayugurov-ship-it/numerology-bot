@@ -331,6 +331,17 @@ def main_menu(user_id: int = None):
         input_field_placeholder="Выберите действие..."
     )
 
+def yes_no_keyboard():
+    """Клавиатура для выбора Да/Нет"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, использовать сохранённую", callback_data="use_saved_date"),
+                InlineKeyboardButton(text="✏️ Нет, ввести новую", callback_data="enter_new_date")
+            ]
+        ]
+    )
+    
 def admin_menu():
     """Меню админ-панели"""
     return ReplyKeyboardMarkup(
@@ -477,15 +488,14 @@ async def numerology_portrait(m: Message):
 
     if saved_date:
         await m.answer(
-            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её?\n\n"
-            "Введите:\n"
-            "• *да* — чтобы использовать сохранённую дату\n"
-            "• *нет* — чтобы ввести новую дату\n"
-            "• или просто введите новую дату в формате ДД.ММ.ГГГГ",
+            f"✨ *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
+            "Использовать сохранённую дату или ввести новую?",
             parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
+            reply_markup=yes_no_keyboard()
         )
+        # Сохраняем информацию о том, какой тип анализа запрошен
+        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "portrait"
+        save_personalization(personalization)
     else:
         await m.answer(
             "✨ *Нумерологический портрет*\n\n"
@@ -501,6 +511,63 @@ async def numerology_portrait(m: Message):
             reply_markup=main_menu(user_id)
         )
 
+@router.callback_query(lambda c: c.data in ["use_saved_date", "enter_new_date"])
+async def handle_date_choice(callback: types.CallbackQuery):
+    """Обработчик выбора да/нет для сохранённой даты"""
+    user_id = callback.from_user.id
+    choice = callback.data
+    
+    # Получаем сохранённую дату и информацию о pending action
+    saved_date = get_saved_birth_date(user_id)
+    user_data = personalization["user_history"].get(str(user_id), {})
+    pending_action = user_data.get("pending_action", "portrait")
+    
+    if choice == "use_saved_date" and saved_date:
+        # Используем сохранённую дату
+        await callback.message.edit_text(f"✨ Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
+        await asyncio.sleep(1)
+        
+        # Создаем фейковое сообщение с сохранённой датой
+        fake_message = types.Message(
+            message_id=callback.message.message_id,
+            date=callback.message.date,
+            chat=callback.message.chat,
+            from_user=callback.from_user,
+            sender_chat=None,
+            text=saved_date
+        )
+        
+        # В зависимости от типа анализа вызываем нужный обработчик
+        if pending_action == "portrait":
+            await date_analysis_handler(fake_message)
+        elif pending_action == "forecast":
+            # Здесь нужно будет сохранять выбранный период для прогноза
+            await callback.message.answer("📅 Теперь выберите период для прогноза:", reply_markup=forecast_period_menu())
+        elif pending_action == "horoscope":
+            await callback.message.answer("🌟 Теперь выберите период для гороскопа:", reply_markup=horoscope_type_menu())
+        elif pending_action == "affirmation":
+            await affirmation_handler(fake_message)
+        elif pending_action == "compatibility":
+            await callback.message.answer(
+                "💞 *Введите вторую дату рождения в формате ДД.ММ.ГГГГ*\n\n"
+                f"Первая дата: {saved_date}\n"
+                "Вторая дата: (введите в формате ДД.ММ.ГГГГ)",
+                parse_mode="Markdown"
+            )
+            # Сохраняем первую дату для совместимости
+            user_data["pending_compatibility_date"] = saved_date
+            save_personalization(personalization)
+    
+    else:  # enter_new_date
+        await callback.message.edit_text("✏️ Хорошо, введите новую дату рождения в формате *ДД.ММ.ГГГГ*\n\nНапример: 15.05.1990", parse_mode="Markdown")
+    
+    # Очищаем pending action
+    if str(user_id) in personalization["user_history"]:
+        personalization["user_history"][str(user_id)].pop("pending_action", None)
+        save_personalization(personalization)
+    
+    await callback.answer()
+
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
 async def compatibility_main(m: Message):
     user_id = m.from_user.id
@@ -510,15 +577,14 @@ async def compatibility_main(m: Message):
 
     if saved_date:
         await m.answer(
-            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её?\n\n"
-            "Введите:\n"
-            "• *да* — чтобы использовать сохранённую дату\n"
-            "• *нет* — чтобы ввести новую дату\n"
-            "• или просто введите новую дату в формате ДД.ММ.ГГГГ",
+            f"✨ *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
+            "Использовать сохранённую дату как первую дату для анализа совместимости?",
             parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
+            reply_markup=yes_no_keyboard()
         )
+        # Сохраняем информацию о том, какой тип анализа запрошен
+        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "compatibility"
+        save_personalization(personalization)
     else:
         await m.answer(
             "💞 *Совместимость партнеров*\n\n"
@@ -541,19 +607,17 @@ async def forecast_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "forecast_request")
     
-    # Проверяем сохраненную дату
     saved_date = get_saved_birth_date(user_id)
     
     if saved_date:
         await m.answer(
-            f"📅 У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её для прогноза?\n\n"
-            "Введите:\n"
-            "• *да* — чтобы использовать сохранённую дату\n"
-            "• *нет* — чтобы ввести новую дату\n"
-            "• или сначала выберите период для прогноза",
-            parse_mode="Markdown"
+            f"📅 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
+            "Использовать сохранённую дату для прогноза?",
+            parse_mode="Markdown",
+            reply_markup=yes_no_keyboard()
         )
+        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "forecast"
+        save_personalization(personalization)
         return
     
     await m.answer(
@@ -592,54 +656,22 @@ async def process_forecast_period(callback: types.CallbackQuery):
     
     await callback.answer()
 
-@router.message(lambda m: m.text.lower() in ["да", "нет"])
-async def reuse_birth_date_handler(m: Message):
-    user_id = m.from_user.id
-    answer = m.text.lower()
-
-    saved_date = get_saved_birth_date(user_id)
-
-    if not saved_date:
-        await m.answer("У вас нет сохранённой даты рождения. Пожалуйста, введите дату в формате ДД.ММ.ГГГГ")
-        return
-
-    if answer == "да":
-        # Имитируем ввод сохраненной даты
-        fake_message = types.Message(
-            message_id=m.message_id,
-            date=m.date,
-            chat=m.chat,
-            from_user=m.from_user,
-            sender_chat=None,
-            text=saved_date
-        )
-
-        await date_analysis_handler(fake_message)
-
-    else:
-        await m.answer(
-            "Хорошо 🙂 Введите новую дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "Например: 15.05.1990"
-        )
-
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
     
-    # Проверяем сохраненную дату
     saved_date = get_saved_birth_date(user_id)
     
     if saved_date:
         await m.answer(
-            f"🌟 У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её для гороскопа?\n\n"
-            "Введите:\n"
-            "• *да* — чтобы использовать сохранённую дату\n"
-            "• *нет* — чтобы ввести новую дату\n"
-            "• или сначала выберите период для гороскопа",
-            parse_mode="Markdown"
+            f"🌟 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
+            "Использовать сохранённую дату для гороскопа?",
+            parse_mode="Markdown",
+            reply_markup=yes_no_keyboard()
         )
+        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "horoscope"
+        save_personalization(personalization)
         return
     
     await m.answer(
@@ -682,20 +714,17 @@ async def process_horoscope_type(callback: types.CallbackQuery):
 async def daily_affirmation(m: Message):
     user_id = m.from_user.id
     
-    # Проверяем сохраненную дату
     saved_date = get_saved_birth_date(user_id)
     
     if saved_date:
         await m.answer(
-            f"🔄 У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её для аффирмации?\n\n"
-            "Введите:\n"
-            "• *да* — чтобы использовать сохранённую дату\n"
-            "• *нет* — чтобы ввести новую дату\n"
-            "• или просто введите дату в формате ДД.ММ.ГГГГ",
+            f"🔄 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
+            "Использовать сохранённую дату для аффирмации?",
             parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
+            reply_markup=yes_no_keyboard()
         )
+        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "affirmation"
+        save_personalization(personalization)
     else:
         await m.answer(
             "🔄 *Моя аффирмация дня*\n\n"
@@ -836,7 +865,17 @@ async def date_analysis_handler(m: Message):
 async def compatibility_analysis_handler(m: Message):
     """Обработчик для анализа совместимости"""
     user_id = m.from_user.id
-    date1, date2 = m.text.split()
+    user_data = personalization["user_history"].get(str(user_id), {})
+    
+    # Проверяем, есть ли сохранённая дата для совместимости
+    if "pending_compatibility_date" in user_data:
+        date1 = user_data["pending_compatibility_date"]
+        date2 = m.text
+        # Очищаем сохранённую дату
+        personalization["user_history"][str(user_id)].pop("pending_compatibility_date", None)
+        save_personalization(personalization)
+    else:
+        date1, date2 = m.text.split()
     
     if not (is_date(date1) and is_date(date2)):
         await m.answer("Пожалуйста, введите даты в правильном формате: ДД.ММ.ГГГГ ДД.ММ.ГГГГ")
