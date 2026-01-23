@@ -259,7 +259,7 @@ class NumerologyFeatures:
         return favorable_days[:5]  # Возвращаем 5 наиболее благоприятных дней
 
 # =====================
-# GROK API
+# GROK API (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 # =====================
 
 async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
@@ -282,7 +282,8 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=90)) as resp:
+            # Уменьшаем таймаут для быстрого ответа
+            async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     print(f"GROQ API ERROR {resp.status}: {error_text}")
@@ -291,8 +292,11 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
 
+    except asyncio.TimeoutError:
+        print("GROQ TIMEOUT: Запрос занял слишком много времени")
+        return "⏳ Запрос занял слишком много времени. Попробуйте снова."
     except Exception as e:
-        print("GROQ ERROR:", e)
+        print("GROQ ERROR:", str(e))
         return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
 # =====================
@@ -877,7 +881,7 @@ async def back_to_main(m: Message):
     )
 
 # =====================
-# MAIN ANALYZERS
+# MAIN ANALYZERS (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 # =====================
 
 @router.message(lambda m: is_date(m.text))
@@ -887,18 +891,20 @@ async def date_analysis_handler(m: Message):
     date_str = m.text
     save_birth_date(user_id, date_str)
     
-    await m.answer("✨ Анализирую ваш нумерологический портрет...")
+    # Отправляем сообщение о начале анализа
+    analysis_msg = await m.answer("✨ Анализирую ваш нумерологический портрет...")
     
-    # Обновляем статистику
-    if "calculations" in stats:
-        stats["calculations"] += 1
-    save_stats(stats)
-    
-    # Получаем число жизненного пути
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    
-    # Создаем промпт для AI
-    prompt = f"""
+    try:
+        # Обновляем статистику
+        if "calculations" in stats:
+            stats["calculations"] += 1
+        save_stats(stats)
+        
+        # Получаем число жизненного пути
+        life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+        
+        # Создаем промпт для AI
+        prompt = f"""
 Создай подробный нумерологический портрет для человека, родившегося {date_str}.
 Число жизненного пути: {life_number if life_number else "расчет не удался"}.
 
@@ -912,17 +918,17 @@ async def date_analysis_handler(m: Message):
 
 Будь вдохновляющим, но реалистичным. Пиши от первого лица, как если бы это был личный отчет.
 """
-    
-    # Получаем анализ от AI
-    analysis = await ask_groq(prompt, "detailed")
-    
-    # Персонализируем ответ
-    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
-    
-    # Добавляем аффирмацию в конце
-    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
-    
-    final_response = f"""
+        
+        # Получаем анализ от AI с таймаутом
+        analysis = await asyncio.wait_for(ask_groq(prompt, "detailed"), timeout=35)
+        
+        # Персонализируем ответ
+        personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
+        
+        # Добавляем аффирмацию в конце
+        affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+        
+        final_response = f"""
 ✨ *Ваш нумерологический портрет* ✨
 
 {personalized_analysis}
@@ -933,11 +939,18 @@ async def date_analysis_handler(m: Message):
 🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
 📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
 """
-    
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    # Обновляем профиль пользователя
-    PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
+        
+        # Отправляем результат
+        await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+        
+        # Обновляем профиль пользователя
+        PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
+        
+    except asyncio.TimeoutError:
+        await m.answer("⏳ Анализ занял слишком много времени. Пожалуйста, попробуйте снова.", reply_markup=main_menu(user_id))
+    except Exception as e:
+        print(f"Error in date_analysis_handler: {e}")
+        await m.answer("🔮 Произошла ошибка при анализе. Попробуйте позже.", reply_markup=main_menu(user_id))
 
 @router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
 async def compatibility_analysis_handler(m: Message):
