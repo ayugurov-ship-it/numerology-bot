@@ -373,6 +373,16 @@ def horoscope_type_menu():
         ]
     )
 
+def birth_date_choice_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Использовать сохранённую", callback_data="use_saved_birthdate"),
+                InlineKeyboardButton(text="✏️ Ввести новую", callback_data="enter_new_birthdate")
+            ]
+        ]
+    )
+
 # =====================
 # UTILITY FUNCTIONS
 # =====================
@@ -458,11 +468,9 @@ async def numerology_portrait(m: Message):
     if saved_date:
         await m.answer(
             f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её?\n\n"
-            "Ответьте:\n"
-            "👉 да\n"
-            "👉 нет",
-            parse_mode="Markdown"
+            "Использовать её или ввести новую?",
+            parse_mode="Markdown",
+            reply_markup=birth_date_choice_keyboard()
         )
     else:
         await m.answer(
@@ -470,34 +478,6 @@ async def numerology_portrait(m: Message):
             "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
             "Например: 15.05.1990",
             parse_mode="Markdown"
-        )
-
-@router.message(lambda m: m.text.lower() in ["да", "нет"])
-async def reuse_birth_date_handler(m: Message):
-    user_id = m.from_user.id
-    answer = m.text.lower()
-
-    saved_date = get_saved_birth_date(user_id)
-
-    if not saved_date:
-        return
-
-    if answer == "да":
-        # имитируем ввод даты
-        fake_message = types.Message(
-            message_id=m.message_id,
-            date=m.date,
-            chat=m.chat,
-            from_user=m.from_user,
-            sender_chat=None,
-            text=saved_date
-        )
-
-        await date_analysis_handler(fake_message)
-
-    else:
-        await m.answer(
-            "Хорошо 🙂 Введите новую дату рождения в формате ДД.ММ.ГГГГ"
         )
 
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
@@ -560,6 +540,37 @@ async def process_forecast_period(callback: types.CallbackQuery):
         f"forecast_{period}"
     )
     
+    await callback.answer()
+
+@router.callback_query(lambda c: c.data in ["use_saved_birthdate", "enter_new_birthdate"])
+async def birthdate_choice_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+
+    if callback.data == "use_saved_birthdate":
+        saved_date = get_saved_birth_date(user_id)
+
+        if not saved_date:
+            await callback.message.answer("Сохранённая дата не найдена. Введите дату вручную.")
+            await callback.answer()
+            return
+
+        # имитируем ввод даты
+        fake_message = types.Message(
+            message_id=callback.message.message_id,
+            date=callback.message.date,
+            chat=callback.message.chat,
+            from_user=callback.from_user,
+            sender_chat=None,
+            text=saved_date
+        )
+
+        await date_analysis_handler(fake_message)
+
+    else:
+        await callback.message.answer(
+            "✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ"
+        )
+
     await callback.answer()
 
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
