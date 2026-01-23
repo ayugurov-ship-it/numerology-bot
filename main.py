@@ -373,16 +373,6 @@ def horoscope_type_menu():
         ]
     )
 
-def birth_date_choice_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Использовать сохранённую", callback_data="use_saved_birthdate"),
-                InlineKeyboardButton(text="✏️ Ввести новую", callback_data="enter_new_birthdate")
-            ]
-        ]
-    )
-
 # =====================
 # UTILITY FUNCTIONS
 # =====================
@@ -419,6 +409,26 @@ def save_birth_date(user_id: int, date_str: str):
 # HANDLERS
 # =====================
 
+async def check_and_offer_saved_date(m: Message, feature_name: str, instruction_text: str):
+    """Проверяет сохраненную дату и предлагает использовать её"""
+    user_id = m.from_user.id
+    saved_date = get_saved_birth_date(user_id)
+    
+    if saved_date:
+        await m.answer(
+            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
+            f"{instruction_text}\n\n"
+            "Введите:\n"
+            "• *да* — чтобы использовать сохранённую дату\n"
+            "• *нет* — чтобы ввести новую дату\n"
+            "• или просто введите дату в нужном формате",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
+        PersonalizationEngine.update_user_profile(user_id, f"{feature_name}_with_saved_check")
+        return True
+    return False
+    
 @router.message(CommandStart())
 async def start(m: Message):
     user_id = m.from_user.id
@@ -468,16 +478,27 @@ async def numerology_portrait(m: Message):
     if saved_date:
         await m.answer(
             f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Использовать её или ввести новую?",
+            "Используем её?\n\n"
+            "Введите:\n"
+            "• *да* — чтобы использовать сохранённую дату\n"
+            "• *нет* — чтобы ввести новую дату\n"
+            "• или просто введите новую дату в формате ДД.ММ.ГГГГ",
             parse_mode="Markdown",
-            reply_markup=birth_date_choice_keyboard()
+            reply_markup=main_menu(user_id)
         )
     else:
         await m.answer(
             "✨ *Нумерологический портрет*\n\n"
             "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "Например: 15.05.1990",
-            parse_mode="Markdown"
+            "Например: 15.05.1990\n\n"
+            "Я рассчитаю:\n"
+            "• Число жизненного пути 🛤️\n"
+            "• Число судьбы 🌟\n"
+            "• Число характера 🔥\n"
+            "• Сильные стороны 💪\n"
+            "• Рекомендации для роста 📈",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
         )
 
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
@@ -485,6 +506,20 @@ async def compatibility_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "compatibility_request_general")
     
+    saved_date = get_saved_birth_date(user_id)
+
+    if saved_date:
+        await m.answer(
+            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
+            "Используем её?\n\n"
+            "Введите:\n"
+            "• *да* — чтобы использовать сохранённую дату\n"
+            "• *нет* — чтобы ввести новую дату\n"
+            "• или просто введите новую дату в формате ДД.ММ.ГГГГ",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
+    else:
     await m.answer(
         "💞 *Совместимость партнеров*\n\n"
         "Введите две даты рождения через пробел:\n\n"
@@ -505,6 +540,21 @@ async def compatibility_main(m: Message):
 async def forecast_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "forecast_request")
+    
+    # Проверяем сохраненную дату
+    saved_date = get_saved_birth_date(user_id)
+    
+    if saved_date:
+        await m.answer(
+            f"📅 У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
+            "Используем её для прогноза?\n\n"
+            "Введите:\n"
+            "• *да* — чтобы использовать сохранённую дату\n"
+            "• *нет* — чтобы ввести новую дату\n"
+            "• или сначала выберите период для прогноза",
+            parse_mode="Markdown"
+        )
+        return
     
     await m.answer(
         "📅 *Прогноз на период*\n\n"
@@ -542,24 +592,24 @@ async def process_forecast_period(callback: types.CallbackQuery):
     
     await callback.answer()
 
-@router.callback_query(lambda c: c.data in ["use_saved_birthdate", "enter_new_birthdate"])
-async def birthdate_choice_callback(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+@router.message(lambda m: m.text.lower() in ["да", "нет"])
+async def reuse_birth_date_handler(m: Message):
+    user_id = m.from_user.id
+    answer = m.text.lower()
 
-    if callback.data == "use_saved_birthdate":
-        saved_date = get_saved_birth_date(user_id)
+    saved_date = get_saved_birth_date(user_id)
 
-        if not saved_date:
-            await callback.message.answer("Сохранённая дата не найдена. Введите дату вручную.")
-            await callback.answer()
-            return
+    if not saved_date:
+        await m.answer("У вас нет сохранённой даты рождения. Пожалуйста, введите дату в формате ДД.ММ.ГГГГ")
+        return
 
-        # имитируем ввод даты
+    if answer == "да":
+        # Имитируем ввод сохраненной даты
         fake_message = types.Message(
-            message_id=callback.message.message_id,
-            date=callback.message.date,
-            chat=callback.message.chat,
-            from_user=callback.from_user,
+            message_id=m.message_id,
+            date=m.date,
+            chat=m.chat,
+            from_user=m.from_user,
             sender_chat=None,
             text=saved_date
         )
@@ -567,16 +617,30 @@ async def birthdate_choice_callback(callback: types.CallbackQuery):
         await date_analysis_handler(fake_message)
 
     else:
-        await callback.message.answer(
-            "✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ"
+        await m.answer(
+            "Хорошо 🙂 Введите новую дату рождения в формате ДД.ММ.ГГГГ\n\n"
+            "Например: 15.05.1990"
         )
-
-    await callback.answer()
 
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
+    
+    # Проверяем сохраненную дату
+    saved_date = get_saved_birth_date(user_id)
+    
+    if saved_date:
+        await m.answer(
+            f"🌟 У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
+            "Используем её для гороскопа?\n\n"
+            "Введите:\n"
+            "• *да* — чтобы использовать сохранённую дату\n"
+            "• *нет* — чтобы ввести новую дату\n"
+            "• или сначала выберите период для гороскопа",
+            parse_mode="Markdown"
+        )
+        return
     
     await m.answer(
         "🌟 *Персональный гороскоп*\n\n"
@@ -618,15 +682,30 @@ async def process_horoscope_type(callback: types.CallbackQuery):
 async def daily_affirmation(m: Message):
     user_id = m.from_user.id
     
-    await m.answer(
-        "🔄 *Моя аффирмация дня*\n\n"
-        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-        "Я создам для вас персональную аффирмацию —\n"
-        "утверждение, которое поможет настроиться\n"
-        "на удачный день и привлечь позитивную энергию.",
-        parse_mode="Markdown",
-        reply_markup=main_menu(user_id)
-    )
+    # Проверяем сохраненную дату
+    saved_date = get_saved_birth_date(user_id)
+    
+    if saved_date:
+        await m.answer(
+            f"🔄 У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
+            "Используем её для аффирмации?\n\n"
+            "Введите:\n"
+            "• *да* — чтобы использовать сохранённую дату\n"
+            "• *нет* — чтобы ввести новую дату\n"
+            "• или просто введите дату в формате ДД.ММ.ГГГГ",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
+    else:
+        await m.answer(
+            "🔄 *Моя аффирмация дня*\n\n"
+            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+            "Я создам для вас персональную аффирмацию —\n"
+            "утверждение, которое поможет настроиться\n"
+            "на удачный день и привлечь позитивную энергию.",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_request")
 
