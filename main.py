@@ -529,16 +529,9 @@ async def handle_date_choice(callback: types.CallbackQuery):
         
         # В зависимости от типа анализа вызываем нужный обработчик
         if pending_action == "portrait":
-            # Создаем фейковое сообщение с сохранённой датой
-            fake_message = types.Message(
-                message_id=callback.message.message_id,
-                date=callback.message.date,
-                chat=callback.message.chat,
-                from_user=callback.from_user,
-                sender_chat=None,
-                text=saved_date
-            )
-            await date_analysis_handler(fake_message)
+    msg = callback.message
+    msg.text = saved_date
+    await date_analysis_handler(msg)
             
         elif pending_action == "forecast":
             # Сохраняем выбранную дату для прогноза и показываем меню периодов
@@ -563,16 +556,9 @@ async def handle_date_choice(callback: types.CallbackQuery):
             )
             
         elif pending_action == "affirmation":
-            # Создаем фейковое сообщение с сохранённой датой
-            fake_message = types.Message(
-                message_id=callback.message.message_id,
-                date=callback.message.date,
-                chat=callback.message.chat,
-                from_user=callback.from_user,
-                sender_chat=None,
-                text=saved_date
-            )
-            await affirmation_handler(fake_message)
+    msg = callback.message
+    msg.text = saved_date
+    await affirmation_handler(msg)
             
         elif pending_action == "compatibility":
             # Сохраняем первую дату для совместимости
@@ -675,21 +661,9 @@ async def process_forecast_period(callback: types.CallbackQuery):
         await asyncio.sleep(1)
         
         # Создаем фейковое сообщение
-        fake_message = types.Message(
-            message_id=callback.message.message_id,
-            date=callback.message.date,
-            chat=callback.message.chat,
-            from_user=callback.from_user,
-            sender_chat=None,
-            text=saved_date
-        )
-        
-        # Сохраняем период в данных пользователя для обработки в horoscope_handler
-        user_data["horoscope_period"] = period
-        save_personalization(personalization)
-        
-        # Запускаем обработку даты
-        await date_analysis_handler(fake_message)
+        msg = callback.message
+        msg.text = saved_date
+        await date_analysis_handler(msg)
         
         # Очищаем сохранённые данные
         user_data.pop("pending_date", None)
