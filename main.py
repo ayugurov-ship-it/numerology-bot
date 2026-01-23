@@ -776,49 +776,92 @@ async def handle_date_choice(callback: types.CallbackQuery):
     pending_action = user_data.get("pending_action")
 
     if callback.data == "use_saved_date":
-        await callback.message.answer("⏳ Обрабатываю...")
+        # Удаляем инлайн-клавиатуру
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer("⏳ Обрабатываю...")
 
         saved_date = get_saved_birth_date(user_id)
         if not saved_date:
             await callback.message.answer("❌ Сохранённая дата не найдена. Введите дату вручную.")
-            await callback.answer()
             return
 
-        fake_msg = callback.message
-        fake_msg.text = saved_date
-
-        # маршрутизация по типу запроса
+        # Создаем новое сообщение с сохраненной датой
         if pending_action == "portrait":
+            await callback.message.answer(f"✨ Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
+            await asyncio.sleep(1)
+            
+            # Создаем фейковое сообщение для вызова обработчика
+            fake_msg = Message(
+                message_id=callback.message.message_id + 1,
+                date=datetime.now(),
+                chat=callback.message.chat,
+                text=saved_date,
+                from_user=callback.from_user
+            )
             await date_analysis_handler(fake_msg)
 
         elif pending_action == "compatibility":
             user_data["pending_compatibility_date"] = saved_date
             save_personalization(personalization)
-            await callback.message.answer("Введите дату рождения партнёра:")
+            await callback.message.answer(
+                f"💞 Использую дату: *{saved_date}* как первую дату\n\n"
+                "Теперь введите *вторую дату* рождения в формате ДД.ММ.ГГГГ:\n\n"
+                "Например: 20.08.1985",
+                parse_mode="Markdown",
+                reply_markup=main_menu(user_id)
+            )
 
         elif pending_action == "forecast":
             user_data["pending_date"] = saved_date
             save_personalization(personalization)
-            await callback.message.answer("Выберите период прогноза:", reply_markup=forecast_period_menu())
+            await callback.message.answer(
+                f"📅 Использую дату: *{saved_date}*\n\n"
+                "Теперь выберите период для прогноза:",
+                parse_mode="Markdown",
+                reply_markup=forecast_period_menu()
+            )
 
         elif pending_action == "horoscope":
-            await callback.message.answer("Выберите период гороскопа:", reply_markup=horoscope_type_menu())
+            user_data["pending_date"] = saved_date
+            save_personalization(personalization)
+            await callback.message.answer(
+                f"🌟 Использую дату: *{saved_date}*\n\n"
+                "Теперь выберите период для гороскопа:",
+                parse_mode="Markdown",
+                reply_markup=horoscope_type_menu()
+            )
 
         elif pending_action == "affirmation":
+            await callback.message.answer(f"🔄 Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
+            await asyncio.sleep(1)
+            
+            fake_msg = Message(
+                message_id=callback.message.message_id + 1,
+                date=datetime.now(),
+                chat=callback.message.chat,
+                text=saved_date,
+                from_user=callback.from_user
+            )
             await affirmation_handler(fake_msg)
 
         else:
-            await callback.message.answer("⚠️ Не удалось определить тип анализа. Попробуйте снова.")
+            await callback.message.answer("⚠️ Не удалось определить тип анализа. Попробуйте снова.", reply_markup=main_menu(user_id))
 
-    else:
-        await callback.message.answer("✏️ Введите новую дату рождения в формате ДД.ММ.ГГГГ")
+    else:  # enter_new_date
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer()
+        await callback.message.answer(
+            "✏️ Хорошо, введите новую дату рождения в формате *ДД.ММ.ГГГГ*\n\n"
+            "Например: 15.05.1990\n\n"
+            "Или выберите другое действие из меню ниже 👇",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
 
     # очистка состояния
     if str(user_id) in personalization["user_history"]:
         personalization["user_history"][str(user_id)].pop("pending_action", None)
         save_personalization(personalization)
-
-    await callback.answer()
 
 @router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
