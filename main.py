@@ -259,7 +259,7 @@ class NumerologyFeatures:
         return favorable_days[:5]  # Возвращаем 5 наиболее благоприятных дней
 
 # =====================
-# GROK API (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# GROK API
 # =====================
 
 async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
@@ -282,8 +282,7 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
 
     try:
         async with aiohttp.ClientSession() as session:
-            # Уменьшаем таймаут для быстрого ответа
-            async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     print(f"GROQ API ERROR {resp.status}: {error_text}")
@@ -292,11 +291,8 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
 
-    except asyncio.TimeoutError:
-        print("GROQ TIMEOUT: Запрос занял слишком много времени")
-        return "⏳ Запрос занял слишком много времени. Попробуйте снова."
     except Exception as e:
-        print("GROQ ERROR:", str(e))
+        print("GROQ ERROR:", e)
         return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
 # =====================
@@ -335,7 +331,6 @@ def main_menu(user_id: int = None):
         input_field_placeholder="Выберите действие..."
     )
 
-    
 def admin_menu():
     """Меню админ-панели"""
     return ReplyKeyboardMarkup(
@@ -378,6 +373,16 @@ def horoscope_type_menu():
         ]
     )
 
+def birth_date_choice_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Использовать сохранённую", callback_data="use_saved_birthdate"),
+                InlineKeyboardButton(text="✏️ Ввести новую", callback_data="enter_new_birthdate")
+            ]
+        ]
+    )
+
 # =====================
 # UTILITY FUNCTIONS
 # =====================
@@ -398,28 +403,22 @@ def format_user_name(user: types.User) -> str:
         name_parts.append(user.last_name)
     return " ".join(name_parts) if name_parts else "Дорогой друг"
 
+def get_saved_birth_date(user_id: int):
+    return personalization["user_history"].get(str(user_id), {}).get("birth_date")
+
+def save_birth_date(user_id: int, date_str: str):
+    user_id_str = str(user_id)
+
+    if user_id_str not in personalization["user_history"]:
+        personalization["user_history"][user_id_str] = {"actions": []}
+
+    personalization["user_history"][user_id_str]["birth_date"] = date_str
+    save_personalization(personalization)
+
 # =====================
 # HANDLERS
 # =====================
 
-async def check_and_offer_saved_date(m: Message, feature_name: str, instruction_text: str):
-    """Проверяет сохраненную дату и предлагает использовать её"""
-    user_id = m.from_user.id
-    
-        await m.answer(
-            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            f"{instruction_text}\n\n"
-            "Введите:\n"
-            "• *да* — чтобы использовать сохранённую дату\n"
-            "• *нет* — чтобы ввести новую дату\n"
-            "• или просто введите дату в нужном формате",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
-        )
-        PersonalizationEngine.update_user_profile(user_id, f"{feature_name}_with_saved_check")
-        return True
-    return False
-    
 @router.message(CommandStart())
 async def start(m: Message):
     user_id = m.from_user.id
@@ -464,28 +463,51 @@ async def numerology_portrait(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "portrait_request")
 
-            await m.answer(
-            f"✨ *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
-            "Использовать сохранённую дату или ввести новую?",
-            parse_mode="Markdown",
-            reply_markup=yes_no_keyboard()
+    saved_date = get_saved_birth_date(user_id)
+
+    if saved_date:
+        await m.answer(
+            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
+            "Используем её?\n\n"
+            "Ответьте:\n"
+            "👉 да\n"
+            "👉 нет",
+            parse_mode="Markdown"
         )
-        # Сохраняем информацию о том, какой тип анализа запрошен
-        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "portrait"
-        save_personalization(personalization)
     else:
         await m.answer(
             "✨ *Нумерологический портрет*\n\n"
             "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "Например: 15.05.1990\n\n"
-            "Я рассчитаю:\n"
-            "• Число жизненного пути 🛤️\n"
-            "• Число судьбы 🌟\n"
-            "• Число характера 🔥\n"
-            "• Сильные стороны 💪\n"
-            "• Рекомендации для роста 📈",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
+            "Например: 15.05.1990",
+            parse_mode="Markdown"
+        )
+
+@router.message(lambda m: m.text.lower() in ["да", "нет"])
+async def reuse_birth_date_handler(m: Message):
+    user_id = m.from_user.id
+    answer = m.text.lower()
+
+    saved_date = get_saved_birth_date(user_id)
+
+    if not saved_date:
+        return
+
+    if answer == "да":
+        # имитируем ввод даты
+        fake_message = types.Message(
+            message_id=m.message_id,
+            date=m.date,
+            chat=m.chat,
+            from_user=m.from_user,
+            sender_chat=None,
+            text=saved_date
+        )
+
+        await date_analysis_handler(fake_message)
+
+    else:
+        await m.answer(
+            "Хорошо 🙂 Введите новую дату рождения в формате ДД.ММ.ГГГГ"
         )
 
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
@@ -493,34 +515,26 @@ async def compatibility_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "compatibility_request_general")
     
-            # Сохраняем информацию о том, какой тип анализа запрошен
-        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "compatibility"
-        save_personalization(personalization)
-    else:
-        await m.answer(
-            "💞 *Совместимость партнеров*\n\n"
-            "Введите две даты рождения через пробел:\n\n"
-            "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
-            "*Пример:* 15.05.1990 20.08.1985\n\n"
-            "Я проанализирую вашу общую совместимость:\n"
-            "• Энергетическую гармонию ⚡\n"
-            "• Эмоциональное соответствие 💖\n"
-            "• Интеллектуальную связь 🧠\n"
-            "• Практическую совместимость 🤝\n"
-            "• Сильные стороны союза 💪\n"
-            "• Рекомендации для развития 🔄",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
-        )
+    await m.answer(
+        "💞 *Совместимость партнеров*\n\n"
+        "Введите две даты рождения через пробел:\n\n"
+        "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
+        "*Пример:* 15.05.1990 20.08.1985\n\n"
+        "Я проанализирую вашу общую совместимость:\n"
+        "• Энергетическую гармонию ⚡\n"
+        "• Эмоциональное соответствие 💖\n"
+        "• Интеллектуальную связь 🧠\n"
+        "• Практическую совместимость 🤝\n"
+        "• Сильные стороны союза 💪\n"
+        "• Рекомендации для развития 🔄",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
 
 @router.message(lambda m: m.text == "📅 Прогноз на период")
 async def forecast_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "forecast_request")
-    
-        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "forecast"
-        save_personalization(personalization)
-        return
     
     await m.answer(
         "📅 *Прогноз на период*\n\n"
@@ -531,128 +545,37 @@ async def forecast_main(m: Message):
 
 @router.callback_query(lambda c: c.data.startswith("forecast_"))
 async def process_forecast_period(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
     period = callback.data.split("_")[1]
     
-    # Проверяем, есть ли сохранённая дата для этого анализа
-    user_data = personalization["user_history"].get(str(user_id), {})
-    
-        # Если есть сохранённая дата, сразу делаем прогноз
-        await callback.message.edit_text(f"📅 Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
-        await asyncio.sleep(1)
-        
-        # Создаем фейковое сообщение
-        msg = callback.message
-        msg.text = saved_date
-        await date_analysis_handler(msg)
-        
-        # Очищаем сохранённые данные
-        user_data.pop("pending_date", None)
-        user_data.pop("horoscope_period", None)
-        save_personalization(personalization)
-        
-    else:
-        # Если нет сохранённой даты, просим ввести
-        period_names = {
-            "week": "неделю ✨",
-            "month": "месяц 📅",
-            "quarter": "3 месяца 📆",
-            "year": "год 🎯"
-        }
-        
-        await callback.message.edit_text(
-            f"📅 *Прогноз на {period_names[period]}*\n\n"
-            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "Я сделаю нумерологический прогноз:\n"
-            "• Благоприятные периоды 🌟\n"
-            "• Возможные вызовы ⚠️\n"
-            "• Рекомендации для успеха 💡\n"
-            "• Фокусные области 🎯",
-            parse_mode="Markdown"
-        )
-        
-        # Сохраняем период в данных пользователя
-        if str(user_id) not in personalization["user_history"]:
-            personalization["user_history"][str(user_id)] = {}
-        personalization["user_history"][str(user_id)]["forecast_period"] = period
-        save_personalization(personalization)
-    
-    PersonalizationEngine.update_user_profile(user_id, f"forecast_{period}")
-    await callback.answer()
-
-@router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("forecast_period"))
-async def forecast_handler(m: Message):
-    """Обработчик для прогнозов с выбором периода"""
-    user_id = m.from_user.id
-    date_str = m.text
-        
-    user_data = personalization["user_history"].get(str(user_id), {})
-    period = user_data.get("forecast_period", "month")
-    
     period_names = {
-        "week": "неделю",
-        "month": "месяц", 
-        "quarter": "3 месяца",
-        "year": "год"
+        "week": "неделю ✨",
+        "month": "месяц 📅",
+        "quarter": "3 месяца 📆",
+        "year": "год 🎯"
     }
     
-    await m.answer(f"📅 Создаю прогноз на {period_names.get(period, 'период')}...")
+    await callback.message.edit_text(
+        f"📅 *Прогноз на {period_names[period]}*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Я сделаю нумерологический прогноз:\n"
+        "• Благоприятные периоды 🌟\n"
+        "• Возможные вызовы ⚠️\n"
+        "• Рекомендации для успеха 💡\n"
+        "• Фокусные области 🎯",
+        parse_mode="Markdown"
+    )
     
-    # Обновляем статистику
-    if "forecasts" in stats:
-        stats["forecasts"] += 1
-    save_stats(stats)
+    PersonalizationEngine.update_user_profile(
+        callback.from_user.id, 
+        f"forecast_{period}"
+    )
     
-    # Создаем промпт для прогноза
-    prompt = f"""
-Сделай нумерологический прогноз на {period_names.get(period, 'период')} для человека, родившегося {date_str}.
-Число жизненного пути: {NumerologyFeatures.calculate_life_path_number(date_str) or 'не определено'}.
-
-Включи:
-1. Общую энергетику периода
-2. Благоприятные сферы и возможности
-3. Возможные вызовы и как их преодолеть
-4. Рекомендации для успеха в этот период
-5. На что обратить особое внимание
-
-Будь практичным и вдохновляющим. Давай конкретные рекомендации.
-"""
-    
-    # Получаем прогноз
-    forecast = await ask_groq(prompt, "forecast")
-    
-    final_response = f"""
-📅 *Ваш прогноз на {period_names.get(period, 'период')}* 📅
-*Дата рождения: {date_str}*
-
-{forecast}
-
-✨ *Число жизненного пути:* {NumerologyFeatures.calculate_life_path_number(date_str) or '?'}
-"""
-    
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    # Очищаем сохранённый период
-    if str(user_id) in personalization["user_history"]:
-        personalization["user_history"][str(user_id)].pop("forecast_period", None)
-        save_personalization(personalization)
-    
-    PersonalizationEngine.update_user_profile(user_id, f"forecast_generated_{period}", {"date": date_str})
+    await callback.answer()
 
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
-    
-            await m.answer(
-            f"🌟 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
-            "Использовать сохранённую дату для гороскопа?",
-            parse_mode="Markdown",
-            reply_markup=yes_no_keyboard()
-        )
-        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "horoscope"
-        save_personalization(personalization)
-        return
     
     await m.answer(
         "🌟 *Персональный гороскоп*\n\n"
@@ -694,24 +617,15 @@ async def process_horoscope_type(callback: types.CallbackQuery):
 async def daily_affirmation(m: Message):
     user_id = m.from_user.id
     
-            await m.answer(
-            f"🔄 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
-            "Использовать сохранённую дату для аффирмации?",
-            parse_mode="Markdown",
-            reply_markup=yes_no_keyboard()
-        )
-        personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "affirmation"
-        save_personalization(personalization)
-    else:
-        await m.answer(
-            "🔄 *Моя аффирмация дня*\n\n"
-            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "Я создам для вас персональную аффирмацию —\n"
-            "утверждение, которое поможет настроиться\n"
-            "на удачный день и привлечь позитивную энергию.",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
-        )
+    await m.answer(
+        "🔄 *Моя аффирмация дня*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Я создам для вас персональную аффирмацию —\n"
+        "утверждение, которое поможет настроиться\n"
+        "на удачный день и привлечь позитивную энергию.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_request")
 
@@ -776,7 +690,7 @@ async def back_to_main(m: Message):
     )
 
 # =====================
-# MAIN ANALYZERS (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# MAIN ANALYZERS
 # =====================
 
 @router.message(lambda m: is_date(m.text))
@@ -784,21 +698,20 @@ async def date_analysis_handler(m: Message):
     """Обработчик для анализа даты рождения"""
     user_id = m.from_user.id
     date_str = m.text
-        
-    # Отправляем сообщение о начале анализа
-    analysis_msg = await m.answer("✨ Анализирую ваш нумерологический портрет...")
+    save_birth_date(user_id, date_str)
     
-    try:
-        # Обновляем статистику
-        if "calculations" in stats:
-            stats["calculations"] += 1
-        save_stats(stats)
-        
-        # Получаем число жизненного пути
-        life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-        
-        # Создаем промпт для AI
-        prompt = f"""
+    await m.answer("✨ Анализирую ваш нумерологический портрет...")
+    
+    # Обновляем статистику
+    if "calculations" in stats:
+        stats["calculations"] += 1
+    save_stats(stats)
+    
+    # Получаем число жизненного пути
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Создаем промпт для AI
+    prompt = f"""
 Создай подробный нумерологический портрет для человека, родившегося {date_str}.
 Число жизненного пути: {life_number if life_number else "расчет не удался"}.
 
@@ -812,17 +725,17 @@ async def date_analysis_handler(m: Message):
 
 Будь вдохновляющим, но реалистичным. Пиши от первого лица, как если бы это был личный отчет.
 """
-        
-        # Получаем анализ от AI с таймаутом
-        analysis = await asyncio.wait_for(ask_groq(prompt, "detailed"), timeout=35)
-        
-        # Персонализируем ответ
-        personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
-        
-        # Добавляем аффирмацию в конце
-        affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
-        
-        final_response = f"""
+    
+    # Получаем анализ от AI
+    analysis = await ask_groq(prompt, "detailed")
+    
+    # Персонализируем ответ
+    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
+    
+    # Добавляем аффирмацию в конце
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    final_response = f"""
 ✨ *Ваш нумерологический портрет* ✨
 
 {personalized_analysis}
@@ -833,34 +746,17 @@ async def date_analysis_handler(m: Message):
 🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
 📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
 """
-        
-        # Отправляем результат
-        await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-        
-        # Обновляем профиль пользователя
-        PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
-        
-    except asyncio.TimeoutError:
-        await m.answer("⏳ Анализ занял слишком много времени. Пожалуйста, попробуйте снова.", reply_markup=main_menu(user_id))
-    except Exception as e:
-        print(f"Error in date_analysis_handler: {e}")
-        await m.answer("🔮 Произошла ошибка при анализе. Попробуйте позже.", reply_markup=main_menu(user_id))
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    # Обновляем профиль пользователя
+    PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
 
 @router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
 async def compatibility_analysis_handler(m: Message):
     """Обработчик для анализа совместимости"""
     user_id = m.from_user.id
-    user_data = personalization["user_history"].get(str(user_id), {})
-    
-    # Проверяем, есть ли сохранённая дата для совместимости
-    if "pending_compatibility_date" in user_data:
-        date1 = user_data["pending_compatibility_date"]
-        date2 = m.text
-        # Очищаем сохранённую дату
-        personalization["user_history"][str(user_id)].pop("pending_compatibility_date", None)
-        save_personalization(personalization)
-    else:
-        date1, date2 = m.text.split()
+    date1, date2 = m.text.split()
     
     if not (is_date(date1) and is_date(date2)):
         await m.answer("Пожалуйста, введите даты в правильном формате: ДД.ММ.ГГГГ ДД.ММ.ГГГГ")
@@ -872,9 +768,6 @@ async def compatibility_analysis_handler(m: Message):
     if "compatibility_checks" in stats:
         stats["compatibility_checks"] += 1
     save_stats(stats)
-    
-    # Сохраняем первую дату как основную (для будущих запросов)
-    save_birth_date(user_id, date1)
     
     # Определяем тип совместимости для внутренней логики (можно оставить)
 
@@ -934,7 +827,8 @@ async def horoscope_handler(m: Message):
     """Обработчик для гороскопов"""
     user_id = m.from_user.id
     date_str = m.text
-        
+    save_birth_date(user_id, date_str)
+    
     # Получаем последний запрос пользователя
     user_history = personalization["user_history"].get(str(user_id), {"actions": []})
     last_action = user_history["actions"][-1] if user_history["actions"] else {}
@@ -1012,7 +906,8 @@ async def affirmation_handler(m: Message):
     """Обработчик для аффирмаций"""
     user_id = m.from_user.id
     date_str = m.text
-        
+    save_birth_date(user_id, date_str)
+    
     # Генерируем аффирмацию
     affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
     
@@ -1043,42 +938,6 @@ async def affirmation_handler(m: Message):
     await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
-
-# =====================
-# ALL OTHER MESSAGES HANDLER
-# =====================
-
-@router.message()
-async def handle_all_other_messages(m: Message):
-    """Обработчик всех сообщений, которые не обработаны другими фильтрами"""
-    user_id = m.from_user.id
-    text = m.text
-    
-    # Обработка кнопок главного меню
-    if text == "✨ Мой нумерологический портрет":
-        await numerology_portrait(m)
-    elif text == "💞 Совместимость партнеров":
-        await compatibility_main(m)
-    elif text == "📅 Прогноз на период":
-        await forecast_main(m)
-    elif text == "🌟 Персональный гороскоп":
-        await horoscope_main(m)
-    elif text == "🔄 Моя аффирмация дня":
-        await daily_affirmation(m)
-    elif text == "👑 Админ-панель":
-        await admin_button_handler(m)
-    elif text == "ℹ️ О боте":
-        await about_bot(m)
-    elif text == "🔙 В главное меню":
-        await back_to_main(m)
-    elif text in ["📊 Статистика", "👥 Пользователи", "📢 Рассылка"] and user_id in ADMIN_IDS:
-        await m.answer("Админ-панель в разработке", reply_markup=admin_menu())
-    else:
-        # Если сообщение не распознано как команда
-        await m.answer(
-            "Пожалуйста, используйте кнопки меню ниже 👇",
-            reply_markup=main_menu(user_id)
-        )
 
 # =====================
 # FLASK WEBHOOK SERVER (остается без изменений)
