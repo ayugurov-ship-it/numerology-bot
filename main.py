@@ -1193,11 +1193,11 @@ async def affirmation_handler(m: Message):
 # ... ваш существующий код ...
 
 @router.message(lambda m: is_date(m.text) and "horoscope" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
-async def horoscope_handler(m: Message):
+    async def horoscope_handler(m: Message):
     # ... существующий код ...
 
 @router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action") == "affirmation_request")
-async def affirmation_handler(m: Message):
+    async def affirmation_handler(m: Message):
     # ... существующий код ...
 
 # =====================
