@@ -1179,10 +1179,6 @@ async def handle_all_other_messages(m: Message):
 # FLASK WEBHOOK SERVER (остается без изменений)
 # =====================
 
-# =====================
-# FLASK WEBHOOK SERVER (остается без изменений)
-# =====================
-
 app = Flask(__name__)
 
 @app.route("/")
