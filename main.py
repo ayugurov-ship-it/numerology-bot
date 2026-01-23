@@ -527,39 +527,72 @@ async def handle_date_choice(callback: types.CallbackQuery):
         await callback.message.edit_text(f"✨ Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
         await asyncio.sleep(1)
         
-        # Создаем фейковое сообщение с сохранённой датой
-        fake_message = types.Message(
-            message_id=callback.message.message_id,
-            date=callback.message.date,
-            chat=callback.message.chat,
-            from_user=callback.from_user,
-            sender_chat=None,
-            text=saved_date
-        )
-        
         # В зависимости от типа анализа вызываем нужный обработчик
         if pending_action == "portrait":
-            await date_analysis_handler(fake_message)
-        elif pending_action == "forecast":
-            # Здесь нужно будет сохранять выбранный период для прогноза
-            await callback.message.answer("📅 Теперь выберите период для прогноза:", reply_markup=forecast_period_menu())
-        elif pending_action == "horoscope":
-            await callback.message.answer("🌟 Теперь выберите период для гороскопа:", reply_markup=horoscope_type_menu())
-        elif pending_action == "affirmation":
-            await affirmation_handler(fake_message)
-        elif pending_action == "compatibility":
-            await callback.message.answer(
-                "💞 *Введите вторую дату рождения в формате ДД.ММ.ГГГГ*\n\n"
-                f"Первая дата: {saved_date}\n"
-                "Вторая дата: (введите в формате ДД.ММ.ГГГГ)",
-                parse_mode="Markdown"
+            # Создаем фейковое сообщение с сохранённой датой
+            fake_message = types.Message(
+                message_id=callback.message.message_id,
+                date=callback.message.date,
+                chat=callback.message.chat,
+                from_user=callback.from_user,
+                sender_chat=None,
+                text=saved_date
             )
+            await date_analysis_handler(fake_message)
+            
+        elif pending_action == "forecast":
+            # Сохраняем выбранную дату для прогноза и показываем меню периодов
+            user_data["pending_date"] = saved_date
+            save_personalization(personalization)
+            await callback.message.answer(
+                f"📅 Использую дату: *{saved_date}*\n\n"
+                "Теперь выберите период для прогноза:",
+                parse_mode="Markdown",
+                reply_markup=forecast_period_menu()
+            )
+            
+        elif pending_action == "horoscope":
+            # Сохраняем выбранную дату для гороскопа и показываем меню периодов
+            user_data["pending_date"] = saved_date
+            save_personalization(personalization)
+            await callback.message.answer(
+                f"🌟 Использую дату: *{saved_date}*\n\n"
+                "Теперь выберите период для гороскопа:",
+                parse_mode="Markdown",
+                reply_markup=horoscope_type_menu()
+            )
+            
+        elif pending_action == "affirmation":
+            # Создаем фейковое сообщение с сохранённой датой
+            fake_message = types.Message(
+                message_id=callback.message.message_id,
+                date=callback.message.date,
+                chat=callback.message.chat,
+                from_user=callback.from_user,
+                sender_chat=None,
+                text=saved_date
+            )
+            await affirmation_handler(fake_message)
+            
+        elif pending_action == "compatibility":
             # Сохраняем первую дату для совместимости
             user_data["pending_compatibility_date"] = saved_date
             save_personalization(personalization)
+            await callback.message.answer(
+                f"💞 Использую дату: *{saved_date}* как первую дату\n\n"
+                "Теперь введите *вторую дату* рождения в формате ДД.ММ.ГГГГ:\n\n"
+                "Например: 20.08.1985",
+                parse_mode="Markdown",
+                reply_markup=main_menu(user_id)
+            )
     
     else:  # enter_new_date
-        await callback.message.edit_text("✏️ Хорошо, введите новую дату рождения в формате *ДД.ММ.ГГГГ*\n\nНапример: 15.05.1990", parse_mode="Markdown")
+        await callback.message.edit_text(
+            "✏️ Хорошо, введите новую дату рождения в формате *ДД.ММ.ГГГГ*\n\n"
+            "Например: 15.05.1990\n\n"
+            "Или выберите другое действие из меню ниже 👇",
+            parse_mode="Markdown"
+        )
     
     # Очищаем pending action
     if str(user_id) in personalization["user_history"]:
@@ -629,32 +662,128 @@ async def forecast_main(m: Message):
 
 @router.callback_query(lambda c: c.data.startswith("forecast_"))
 async def process_forecast_period(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     period = callback.data.split("_")[1]
     
+    # Проверяем, есть ли сохранённая дата для этого анализа
+    user_data = personalization["user_history"].get(str(user_id), {})
+    saved_date = user_data.get("pending_date")
+    
+    if saved_date:
+        # Если есть сохранённая дата, сразу делаем прогноз
+        await callback.message.edit_text(f"📅 Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
+        await asyncio.sleep(1)
+        
+        # Создаем фейковое сообщение
+        fake_message = types.Message(
+            message_id=callback.message.message_id,
+            date=callback.message.date,
+            chat=callback.message.chat,
+            from_user=callback.from_user,
+            sender_chat=None,
+            text=saved_date
+        )
+        
+        # Сохраняем период в данных пользователя для обработки в horoscope_handler
+        user_data["horoscope_period"] = period
+        save_personalization(personalization)
+        
+        # Запускаем обработку даты
+        await date_analysis_handler(fake_message)
+        
+        # Очищаем сохранённые данные
+        user_data.pop("pending_date", None)
+        user_data.pop("horoscope_period", None)
+        save_personalization(personalization)
+        
+    else:
+        # Если нет сохранённой даты, просим ввести
+        period_names = {
+            "week": "неделю ✨",
+            "month": "месяц 📅",
+            "quarter": "3 месяца 📆",
+            "year": "год 🎯"
+        }
+        
+        await callback.message.edit_text(
+            f"📅 *Прогноз на {period_names[period]}*\n\n"
+            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+            "Я сделаю нумерологический прогноз:\n"
+            "• Благоприятные периоды 🌟\n"
+            "• Возможные вызовы ⚠️\n"
+            "• Рекомендации для успеха 💡\n"
+            "• Фокусные области 🎯",
+            parse_mode="Markdown"
+        )
+        
+        # Сохраняем период в данных пользователя
+        if str(user_id) not in personalization["user_history"]:
+            personalization["user_history"][str(user_id)] = {}
+        personalization["user_history"][str(user_id)]["forecast_period"] = period
+        save_personalization(personalization)
+    
+    PersonalizationEngine.update_user_profile(user_id, f"forecast_{period}")
+    await callback.answer()
+
+@router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("forecast_period"))
+async def forecast_handler(m: Message):
+    """Обработчик для прогнозов с выбором периода"""
+    user_id = m.from_user.id
+    date_str = m.text
+    save_birth_date(user_id, date_str)
+    
+    user_data = personalization["user_history"].get(str(user_id), {})
+    period = user_data.get("forecast_period", "month")
+    
     period_names = {
-        "week": "неделю ✨",
-        "month": "месяц 📅",
-        "quarter": "3 месяца 📆",
-        "year": "год 🎯"
+        "week": "неделю",
+        "month": "месяц", 
+        "quarter": "3 месяца",
+        "year": "год"
     }
     
-    await callback.message.edit_text(
-        f"📅 *Прогноз на {period_names[period]}*\n\n"
-        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-        "Я сделаю нумерологический прогноз:\n"
-        "• Благоприятные периоды 🌟\n"
-        "• Возможные вызовы ⚠️\n"
-        "• Рекомендации для успеха 💡\n"
-        "• Фокусные области 🎯",
-        parse_mode="Markdown"
-    )
+    await m.answer(f"📅 Создаю прогноз на {period_names.get(period, 'период')}...")
     
-    PersonalizationEngine.update_user_profile(
-        callback.from_user.id, 
-        f"forecast_{period}"
-    )
+    # Обновляем статистику
+    if "forecasts" in stats:
+        stats["forecasts"] += 1
+    save_stats(stats)
     
-    await callback.answer()
+    # Создаем промпт для прогноза
+    prompt = f"""
+Сделай нумерологический прогноз на {period_names.get(period, 'период')} для человека, родившегося {date_str}.
+Число жизненного пути: {NumerologyFeatures.calculate_life_path_number(date_str) or 'не определено'}.
+
+Включи:
+1. Общую энергетику периода
+2. Благоприятные сферы и возможности
+3. Возможные вызовы и как их преодолеть
+4. Рекомендации для успеха в этот период
+5. На что обратить особое внимание
+
+Будь практичным и вдохновляющим. Давай конкретные рекомендации.
+"""
+    
+    # Получаем прогноз
+    forecast = await ask_groq(prompt, "forecast")
+    
+    final_response = f"""
+📅 *Ваш прогноз на {period_names.get(period, 'период')}* 📅
+*Дата рождения: {date_str}*
+
+{forecast}
+
+✨ *Число жизненного пути:* {NumerologyFeatures.calculate_life_path_number(date_str) or '?'}
+"""
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    # Очищаем сохранённый период
+    if str(user_id) in personalization["user_history"]:
+        personalization["user_history"][str(user_id)].pop("forecast_period", None)
+        save_personalization(personalization)
+    
+    PersonalizationEngine.update_user_profile(user_id, f"forecast_generated_{period}", {"date": date_str})
 
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
 async def horoscope_main(m: Message):
