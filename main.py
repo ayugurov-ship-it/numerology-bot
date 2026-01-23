@@ -335,16 +335,6 @@ def main_menu(user_id: int = None):
         input_field_placeholder="Выберите действие..."
     )
 
-def yes_no_keyboard():
-    """Клавиатура для выбора Да/Нет"""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Да, использовать сохранённую", callback_data="use_saved_date"),
-                InlineKeyboardButton(text="✏️ Нет, ввести новую", callback_data="enter_new_date")
-            ]
-        ]
-    )
     
 def admin_menu():
     """Меню админ-панели"""
@@ -408,18 +398,6 @@ def format_user_name(user: types.User) -> str:
         name_parts.append(user.last_name)
     return " ".join(name_parts) if name_parts else "Дорогой друг"
 
-def get_saved_birth_date(user_id: int):
-    return personalization["user_history"].get(str(user_id), {}).get("birth_date")
-
-def save_birth_date(user_id: int, date_str: str):
-    user_id_str = str(user_id)
-
-    if user_id_str not in personalization["user_history"]:
-        personalization["user_history"][user_id_str] = {"actions": []}
-
-    personalization["user_history"][user_id_str]["birth_date"] = date_str
-    save_personalization(personalization)
-
 # =====================
 # HANDLERS
 # =====================
@@ -427,9 +405,7 @@ def save_birth_date(user_id: int, date_str: str):
 async def check_and_offer_saved_date(m: Message, feature_name: str, instruction_text: str):
     """Проверяет сохраненную дату и предлагает использовать её"""
     user_id = m.from_user.id
-    saved_date = get_saved_birth_date(user_id)
     
-    if saved_date:
         await m.answer(
             f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
             f"{instruction_text}\n\n"
@@ -488,10 +464,7 @@ async def numerology_portrait(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "portrait_request")
 
-    saved_date = get_saved_birth_date(user_id)
-
-    if saved_date:
-        await m.answer(
+            await m.answer(
             f"✨ *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
             "Использовать сохранённую дату или ввести новую?",
             parse_mode="Markdown",
@@ -520,16 +493,7 @@ async def compatibility_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "compatibility_request_general")
     
-    saved_date = get_saved_birth_date(user_id)
-
-    if saved_date:
-        await m.answer(
-            f"✨ *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
-            "Использовать сохранённую дату как первую дату для анализа совместимости?",
-            parse_mode="Markdown",
-            reply_markup=yes_no_keyboard()
-        )
-        # Сохраняем информацию о том, какой тип анализа запрошен
+            # Сохраняем информацию о том, какой тип анализа запрошен
         personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "compatibility"
         save_personalization(personalization)
     else:
@@ -554,15 +518,6 @@ async def forecast_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "forecast_request")
     
-    saved_date = get_saved_birth_date(user_id)
-    
-    if saved_date:
-        await m.answer(
-            f"📅 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
-            "Использовать сохранённую дату для прогноза?",
-            parse_mode="Markdown",
-            reply_markup=yes_no_keyboard()
-        )
         personalization["user_history"].setdefault(str(user_id), {})["pending_action"] = "forecast"
         save_personalization(personalization)
         return
@@ -581,9 +536,7 @@ async def process_forecast_period(callback: types.CallbackQuery):
     
     # Проверяем, есть ли сохранённая дата для этого анализа
     user_data = personalization["user_history"].get(str(user_id), {})
-    saved_date = user_data.get("pending_date")
     
-    if saved_date:
         # Если есть сохранённая дата, сразу делаем прогноз
         await callback.message.edit_text(f"📅 Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
         await asyncio.sleep(1)
@@ -632,8 +585,7 @@ async def forecast_handler(m: Message):
     """Обработчик для прогнозов с выбором периода"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
-    
+        
     user_data = personalization["user_history"].get(str(user_id), {})
     period = user_data.get("forecast_period", "month")
     
@@ -692,10 +644,7 @@ async def horoscope_main(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
     
-    saved_date = get_saved_birth_date(user_id)
-    
-    if saved_date:
-        await m.answer(
+            await m.answer(
             f"🌟 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
             "Использовать сохранённую дату для гороскопа?",
             parse_mode="Markdown",
@@ -745,10 +694,7 @@ async def process_horoscope_type(callback: types.CallbackQuery):
 async def daily_affirmation(m: Message):
     user_id = m.from_user.id
     
-    saved_date = get_saved_birth_date(user_id)
-    
-    if saved_date:
-        await m.answer(
+            await m.answer(
             f"🔄 *У меня сохранена ваша дата рождения:* {saved_date}\n\n"
             "Использовать сохранённую дату для аффирмации?",
             parse_mode="Markdown",
@@ -768,100 +714,6 @@ async def daily_affirmation(m: Message):
         )
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_request")
-
-@router.callback_query(lambda c: c.data in ["use_saved_date", "enter_new_date"])
-async def handle_date_choice(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user_data = personalization["user_history"].get(str(user_id), {})
-    pending_action = user_data.get("pending_action")
-
-    if callback.data == "use_saved_date":
-        # Удаляем инлайн-клавиатуру
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.answer("⏳ Обрабатываю...")
-
-        saved_date = get_saved_birth_date(user_id)
-        if not saved_date:
-            await callback.message.answer("❌ Сохранённая дата не найдена. Введите дату вручную.")
-            return
-
-        # Создаем новое сообщение с сохраненной датой
-        if pending_action == "portrait":
-            await callback.message.answer(f"✨ Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
-            await asyncio.sleep(1)
-            
-            # Создаем фейковое сообщение для вызова обработчика
-            fake_msg = Message(
-                message_id=callback.message.message_id + 1,
-                date=datetime.now(),
-                chat=callback.message.chat,
-                text=saved_date,
-                from_user=callback.from_user
-            )
-            await date_analysis_handler(fake_msg)
-
-        elif pending_action == "compatibility":
-            user_data["pending_compatibility_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer(
-                f"💞 Использую дату: *{saved_date}* как первую дату\n\n"
-                "Теперь введите *вторую дату* рождения в формате ДД.ММ.ГГГГ:\n\n"
-                "Например: 20.08.1985",
-                parse_mode="Markdown",
-                reply_markup=main_menu(user_id)
-            )
-
-        elif pending_action == "forecast":
-            user_data["pending_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer(
-                f"📅 Использую дату: *{saved_date}*\n\n"
-                "Теперь выберите период для прогноза:",
-                parse_mode="Markdown",
-                reply_markup=forecast_period_menu()
-            )
-
-        elif pending_action == "horoscope":
-            user_data["pending_date"] = saved_date
-            save_personalization(personalization)
-            await callback.message.answer(
-                f"🌟 Использую дату: *{saved_date}*\n\n"
-                "Теперь выберите период для гороскопа:",
-                parse_mode="Markdown",
-                reply_markup=horoscope_type_menu()
-            )
-
-        elif pending_action == "affirmation":
-            await callback.message.answer(f"🔄 Использую сохранённую дату: *{saved_date}*", parse_mode="Markdown")
-            await asyncio.sleep(1)
-            
-            fake_msg = Message(
-                message_id=callback.message.message_id + 1,
-                date=datetime.now(),
-                chat=callback.message.chat,
-                text=saved_date,
-                from_user=callback.from_user
-            )
-            await affirmation_handler(fake_msg)
-
-        else:
-            await callback.message.answer("⚠️ Не удалось определить тип анализа. Попробуйте снова.", reply_markup=main_menu(user_id))
-
-    else:  # enter_new_date
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.answer()
-        await callback.message.answer(
-            "✏️ Хорошо, введите новую дату рождения в формате *ДД.ММ.ГГГГ*\n\n"
-            "Например: 15.05.1990\n\n"
-            "Или выберите другое действие из меню ниже 👇",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
-        )
-
-    # очистка состояния
-    if str(user_id) in personalization["user_history"]:
-        personalization["user_history"][str(user_id)].pop("pending_action", None)
-        save_personalization(personalization)
 
 @router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
@@ -932,8 +784,7 @@ async def date_analysis_handler(m: Message):
     """Обработчик для анализа даты рождения"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
-    
+        
     # Отправляем сообщение о начале анализа
     analysis_msg = await m.answer("✨ Анализирую ваш нумерологический портрет...")
     
@@ -1083,8 +934,7 @@ async def horoscope_handler(m: Message):
     """Обработчик для гороскопов"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
-    
+        
     # Получаем последний запрос пользователя
     user_history = personalization["user_history"].get(str(user_id), {"actions": []})
     last_action = user_history["actions"][-1] if user_history["actions"] else {}
@@ -1162,8 +1012,7 @@ async def affirmation_handler(m: Message):
     """Обработчик для аффирмаций"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
-    
+        
     # Генерируем аффирмацию
     affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
     
