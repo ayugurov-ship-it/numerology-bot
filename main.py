@@ -373,16 +373,6 @@ def horoscope_type_menu():
         ]
     )
 
-def birth_date_choice_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Использовать сохранённую", callback_data="use_saved_birthdate"),
-                InlineKeyboardButton(text="✏️ Ввести новую", callback_data="enter_new_birthdate")
-            ]
-        ]
-    )
-
 # =====================
 # UTILITY FUNCTIONS
 # =====================
@@ -402,18 +392,6 @@ def format_user_name(user: types.User) -> str:
     if user.last_name:
         name_parts.append(user.last_name)
     return " ".join(name_parts) if name_parts else "Дорогой друг"
-
-def get_saved_birth_date(user_id: int):
-    return personalization["user_history"].get(str(user_id), {}).get("birth_date")
-
-def save_birth_date(user_id: int, date_str: str):
-    user_id_str = str(user_id)
-
-    if user_id_str not in personalization["user_history"]:
-        personalization["user_history"][user_id_str] = {"actions": []}
-
-    personalization["user_history"][user_id_str]["birth_date"] = date_str
-    save_personalization(personalization)
 
 # =====================
 # HANDLERS
@@ -462,53 +440,20 @@ async def start(m: Message):
 async def numerology_portrait(m: Message):
     user_id = m.from_user.id
     PersonalizationEngine.update_user_profile(user_id, "portrait_request")
-
-    saved_date = get_saved_birth_date(user_id)
-
-    if saved_date:
-        await m.answer(
-            f"✨ У меня сохранена ваша дата рождения: *{saved_date}*\n\n"
-            "Используем её?\n\n"
-            "Ответьте:\n"
-            "👉 да\n"
-            "👉 нет",
-            parse_mode="Markdown"
-        )
-    else:
-        await m.answer(
-            "✨ *Нумерологический портрет*\n\n"
-            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "Например: 15.05.1990",
-            parse_mode="Markdown"
-        )
-
-@router.message(lambda m: m.text.lower() in ["да", "нет"])
-async def reuse_birth_date_handler(m: Message):
-    user_id = m.from_user.id
-    answer = m.text.lower()
-
-    saved_date = get_saved_birth_date(user_id)
-
-    if not saved_date:
-        return
-
-    if answer == "да":
-        # имитируем ввод даты
-        fake_message = types.Message(
-            message_id=m.message_id,
-            date=m.date,
-            chat=m.chat,
-            from_user=m.from_user,
-            sender_chat=None,
-            text=saved_date
-        )
-
-        await date_analysis_handler(fake_message)
-
-    else:
-        await m.answer(
-            "Хорошо 🙂 Введите новую дату рождения в формате ДД.ММ.ГГГГ"
-        )
+    
+    await m.answer(
+        "✨ *Нумерологический портрет*\n\n"
+        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+        "Например: 15.05.1990\n\n"
+        "Я рассчитаю:\n"
+        "• Число жизненного пути 🛤️\n"
+        "• Число судьбы 🌟\n"
+        "• Число характера 🔥\n"
+        "• Сильные стороны 💪\n"
+        "• Рекомендации для роста 📈",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
 
 @router.message(lambda m: m.text == "💞 Совместимость партнеров")
 async def compatibility_main(m: Message):
@@ -698,7 +643,6 @@ async def date_analysis_handler(m: Message):
     """Обработчик для анализа даты рождения"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
     
     await m.answer("✨ Анализирую ваш нумерологический портрет...")
     
@@ -827,7 +771,6 @@ async def horoscope_handler(m: Message):
     """Обработчик для гороскопов"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
     
     # Получаем последний запрос пользователя
     user_history = personalization["user_history"].get(str(user_id), {"actions": []})
@@ -906,7 +849,6 @@ async def affirmation_handler(m: Message):
     """Обработчик для аффирмаций"""
     user_id = m.from_user.id
     date_str = m.text
-    save_birth_date(user_id, date_str)
     
     # Генерируем аффирмацию
     affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
