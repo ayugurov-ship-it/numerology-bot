@@ -770,8 +770,7 @@ async def compatibility_analysis_handler(m: Message):
     
     PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
     
-    @router.message(lambda m: is_date(m.text) and "forecast" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
-    
+@router.message(lambda m: is_date(m.text) and "forecast" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
 async def forecast_handler(m: Message):
     """Обработчик для прогнозов"""
     user_id = m.from_user.id
