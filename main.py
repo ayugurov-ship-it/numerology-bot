@@ -492,6 +492,14 @@ async def forecast_main(m: Message):
 async def process_forecast_period(callback: types.CallbackQuery):
     period = callback.data.split("_")[1]
     
+    # Сохраняем период в пользовательских данных
+    user_id = callback.from_user.id
+    if str(user_id) not in users:
+        users[str(user_id)] = {}
+    
+    users[str(user_id)]["last_forecast_period"] = period
+    save_users(users)  # Не забудьте сохранить!
+    
     period_names = {
         "week": "неделю ✨",
         "month": "месяц 📅",
@@ -516,7 +524,7 @@ async def process_forecast_period(callback: types.CallbackQuery):
     )
     
     await callback.answer()
-
+    
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
@@ -761,6 +769,88 @@ async def compatibility_analysis_handler(m: Message):
     await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
     PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
+    
+    @router.message(lambda m: is_date(m.text) and "forecast" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
+    
+async def forecast_handler(m: Message):
+    """Обработчик для прогнозов"""
+    user_id = m.from_user.id
+    date_str = m.text
+    
+    # Получаем выбранный период из сохраненных данных
+    period = users.get(str(user_id), {}).get("last_forecast_period", "month")
+    
+    period_names = {
+        "week": "неделю",
+        "month": "месяц",
+        "quarter": "3 месяца", 
+        "year": "год"
+    }
+    
+    period_display = period_names.get(period, "месяц")
+    
+    await m.answer(f"📅 Анализирую ваш прогноз на {period_display}...")
+    
+    # Обновляем статистику
+    if "forecasts" in stats:
+        stats["forecasts"] += 1
+    save_stats(stats)
+    
+    # Получаем число жизненного пути
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Текущая дата для контекста
+    current_date = datetime.now().strftime("%d.%m.%Y")
+    
+    # Создаем промпт для прогноза С ЯВНЫМ УКАЗАНИЕМ ПЕРИОДА
+    prompt = f"""
+Создай подробный нумерологический прогноз на {period_display} для человека, родившегося {date_str}.
+Текущая дата: {current_date}.
+
+Число жизненного пути: {life_number if life_number else "не определено"}.
+
+Включи следующие разделы:
+1. Общая энергетика предстоящего периода ({period_display})
+2. Конкретные благоприятные даты и периоды (укажи примерные даты или недели)
+3. Возможные вызовы и как их преодолеть
+4. Рекомендации для достижения успеха
+5. Сферы жизни, на которые стоит обратить особое внимание
+6. Числовые вибрации, влияющие на этот период
+
+Укажи конкретные временные рамки в своем ответе. Например:
+- "В первую неделю (с [дата] по [дата])..."
+- "В середине месяца (около [дата])..."
+- "К концу периода (после [дата])..."
+
+Будь максимально конкретным в отношении времени.
+"""
+    
+    # Получаем прогноз от AI
+    forecast = await ask_groq(prompt, "forecast")
+    
+    # Персонализируем ответ
+    personalized_forecast = PersonalizationEngine.personalize_response(user_id, forecast, "forecast")
+    
+    # Формируем финальный ответ с явным указанием периода
+    final_response = f"""
+📅 *Ваш нумерологический прогноз* 📅
+*Период: {period_display.capitalize()}*
+*Начало анализа: {current_date}*
+
+{personalized_forecast}
+
+🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
+📊 *Энергия периода:* {random.randint(1, 9)} (от 1 до 9, где выше — более активный период)
+"""
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    # Обновляем профиль пользователя
+    PersonalizationEngine.update_user_profile(
+        user_id, 
+        f"forecast_generated_{period}",
+        {"date": date_str, "period": period}
+    )
 
 # =====================
 # HOROSCOPE HANDLER
