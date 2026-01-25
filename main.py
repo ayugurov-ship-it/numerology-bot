@@ -648,9 +648,35 @@ async def back_to_main(m: Message):
 
 @router.message(lambda m: is_date(m.text))
 async def date_analysis_handler(m: Message):
-    """Обработчик для анализа даты рождения"""
+    """Универсальный обработчик дат с маршрутизацией"""
     user_id = m.from_user.id
     date_str = m.text
+    
+    # Получаем историю действий пользователя
+    user_history = personalization["user_history"].get(str(user_id), {"actions": []})
+    
+    if not user_history["actions"]:
+        # Если нет истории, это портрет
+        await process_portrait(m, date_str)
+        return
+    
+    # Получаем последнее действие
+    last_action = user_history["actions"][-1]["action"]
+    
+    # Маршрутизация по последнему действию
+    if "forecast" in last_action:
+        await forecast_handler(m, date_str, last_action)
+    elif "horoscope" in last_action:
+        await horoscope_handler(m, date_str, last_action)
+    elif last_action == "affirmation_request":
+        await affirmation_handler(m, date_str)
+    else:
+        # По умолчанию - портрет
+        await process_portrait(m, date_str)
+
+async def process_portrait(m: Message, date_str: str):
+    """Обработка нумерологического портрета"""
+    user_id = m.from_user.id
     
     await m.answer("✨ Анализирую ваш нумерологический портрет...")
     
@@ -703,6 +729,79 @@ async def date_analysis_handler(m: Message):
     
     # Обновляем профиль пользователя
     PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
+
+async def forecast_handler(m: Message, date_str: str, last_action: str):
+    """Обработчик для прогнозов"""
+    user_id = m.from_user.id
+    
+    # Извлекаем период из последнего действия (например: "forecast_month")
+    if "_" in last_action:
+        period = last_action.split("_")[1]
+    else:
+        period = "month"  # По умолчанию месяц
+    
+    period_names = {
+        "week": "неделю",
+        "month": "месяц",
+        "quarter": "3 месяца", 
+        "year": "год"
+    }
+    
+    period_display = period_names.get(period, "месяц")
+    
+    await m.answer(f"📅 Анализирую ваш прогноз на {period_display}...")
+    
+    # Обновляем статистику
+    if "forecasts" in stats:
+        stats["forecasts"] += 1
+    save_stats(stats)
+    
+    # Получаем число жизненного пути
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Текущая дата для контекста
+    current_date = datetime.now().strftime("%d.%m.%Y")
+    
+    # Создаем промпт для прогноза
+    prompt = f"""
+Создай подробный нумерологический прогноз на {period_display} для человека, родившегося {date_str}.
+Текущая дата: {current_date}.
+
+Число жизненного пути: {life_number if life_number else "не определено"}.
+
+Включи следующие разделы:
+1. Общая энергетика предстоящего периода ({period_display})
+2. Конкретные благоприятные даты и периоды
+3. Возможные вызовы и как их преодолеть
+4. Рекомендации для достижения успеха
+5. Сферы жизни, на которые стоит обратить особое внимание
+6. Числовые вибрации, влияющие на этот период
+
+Укажи конкретные временные рамки в своем ответе.
+"""
+    
+    # Получаем прогноз от AI
+    forecast = await ask_groq(prompt, "forecast")
+    
+    # Формируем финальный ответ
+    final_response = f"""
+📅 *Ваш нумерологический прогноз* 📅
+*Период: {period_display.capitalize()}*
+*Начало анализа: {current_date}*
+
+{forecast}
+
+🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
+"""
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    # Обновляем профиль пользователя
+    PersonalizationEngine.update_user_profile(
+        user_id, 
+        f"forecast_generated_{period}",
+        {"date": date_str, "period": period}
+    )
 
 @router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
 async def compatibility_analysis_handler(m: Message):
@@ -770,205 +869,6 @@ async def compatibility_analysis_handler(m: Message):
     
     PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
     
-@router.message(lambda m: is_date(m.text) and "forecast" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
-async def forecast_handler(m: Message):
-    """Обработчик для прогнозов"""
-    user_id = m.from_user.id
-    date_str = m.text
-    
-    # Получаем выбранный период из сохраненных данных
-    period = users.get(str(user_id), {}).get("last_forecast_period", "month")
-    
-    period_names = {
-        "week": "неделю",
-        "month": "месяц",
-        "quarter": "3 месяца", 
-        "year": "год"
-    }
-    
-    period_display = period_names.get(period, "месяц")
-    
-    await m.answer(f"📅 Анализирую ваш прогноз на {period_display}...")
-    
-    # Обновляем статистику
-    if "forecasts" in stats:
-        stats["forecasts"] += 1
-    save_stats(stats)
-    
-    # Получаем число жизненного пути
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    
-    # Текущая дата для контекста
-    current_date = datetime.now().strftime("%d.%m.%Y")
-    
-    # Создаем промпт для прогноза С ЯВНЫМ УКАЗАНИЕМ ПЕРИОДА
-    prompt = f"""
-Создай подробный нумерологический прогноз на {period_display} для человека, родившегося {date_str}.
-Текущая дата: {current_date}.
-
-Число жизненного пути: {life_number if life_number else "не определено"}.
-
-Включи следующие разделы:
-1. Общая энергетика предстоящего периода ({period_display})
-2. Конкретные благоприятные даты и периоды (укажи примерные даты или недели)
-3. Возможные вызовы и как их преодолеть
-4. Рекомендации для достижения успеха
-5. Сферы жизни, на которые стоит обратить особое внимание
-6. Числовые вибрации, влияющие на этот период
-
-Укажи конкретные временные рамки в своем ответе. Например:
-- "В первую неделю (с [дата] по [дата])..."
-- "В середине месяца (около [дата])..."
-- "К концу периода (после [дата])..."
-
-Будь максимально конкретным в отношении времени.
-"""
-    
-    # Получаем прогноз от AI
-    forecast = await ask_groq(prompt, "forecast")
-    
-    # Персонализируем ответ
-    personalized_forecast = PersonalizationEngine.personalize_response(user_id, forecast, "forecast")
-    
-    # Формируем финальный ответ с явным указанием периода
-    final_response = f"""
-📅 *Ваш нумерологический прогноз* 📅
-*Период: {period_display.capitalize()}*
-*Начало анализа: {current_date}*
-
-{personalized_forecast}
-
-🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
-📊 *Энергия периода:* {random.randint(1, 9)} (от 1 до 9, где выше — более активный период)
-"""
-    
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    # Обновляем профиль пользователя
-    PersonalizationEngine.update_user_profile(
-        user_id, 
-        f"forecast_generated_{period}",
-        {"date": date_str, "period": period}
-    )
-
-# =====================
-# HOROSCOPE HANDLER
-# =====================
-
-@router.message(lambda m: is_date(m.text) and "horoscope" in personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action", ""))
-async def horoscope_handler(m: Message):
-    """Обработчик для гороскопов"""
-    user_id = m.from_user.id
-    date_str = m.text
-    
-    # Получаем последний запрос пользователя
-    user_history = personalization["user_history"].get(str(user_id), {"actions": []})
-    last_action = user_history["actions"][-1] if user_history["actions"] else {}
-    
-    if "horoscope" not in last_action.get("action", ""):
-        return
-    
-    horoscope_type = last_action["action"].split("_")[1] if "_" in last_action["action"] else "today"
-    
-    type_names = {
-        "today": "сегодня",
-        "tomorrow": "завтра", 
-        "week": "эту неделю",
-        "month": "этот месяц"
-    }
-    
-    await m.answer(f"🌟 Создаю гороскоп на {type_names.get(horoscope_type, 'период')}...")
-    
-    # Обновляем статистику
-    if "horoscopes" in stats:
-        stats["horoscopes"] += 1
-    save_stats(stats)
-    
-    # Создаем промпт для гороскопа
-    prompt = f"""
-Создай персональный нумерологический гороскоп на {type_names.get(horoscope_type, 'период')} для человека, родившегося {date_str}.
-Число жизненного пути: {NumerologyFeatures.calculate_life_path_number(date_str) or 'не определено'}.
-
-Включи:
-1. Общую энергетику периода
-2. Благоприятные сферы
-3. Возможные вызовы
-4. Совет от чисел
-5. Число удачи на период
-
-Будь вдохновляющим и мотивирующим. Используй метафоры и образы.
-"""
-    
-    # Получаем гороскоп
-    horoscope = await ask_groq(prompt, "horoscope")
-    
-    # Добавляем персональную аффирмацию
-    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
-    
-    # Получаем благоприятные дни если это прогноз на месяц
-    favorable_days = []
-    if horoscope_type == "month":
-        favorable_days = NumerologyFeatures.calculate_favorable_days(date_str, datetime.now().strftime("%m"))
-    
-    final_response = f"""
-🌟 *Ваш персональный гороскоп* 🌟
-*На {type_names.get(horoscope_type, 'период')}*
-
-{horoscope}
-
-🔄 *Аффирмация:*
-{affirmation}
-"""
-    
-    if favorable_days:
-        final_response += f"\n📅 *Благоприятные дни:* {', '.join(map(str, favorable_days))}"
-    
-    final_response += f"\n\n✨ *Число жизненного пути:* {NumerologyFeatures.calculate_life_path_number(date_str) or '?'}"
-    
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{horoscope_type}", {"date": date_str})
-
-# =====================
-# AFFIRMATION HANDLER
-# =====================
-
-@router.message(lambda m: is_date(m.text) and personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:][0].get("action") == "affirmation_request")
-async def affirmation_handler(m: Message):
-    """Обработчик для аффирмаций"""
-    user_id = m.from_user.id
-    date_str = m.text
-    
-    # Генерируем аффирмацию
-    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
-    
-    # Получаем число жизненного пути для контекста
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    
-    # Создаем красивый ответ
-    affirmation_text = f"""
-🔄 *Ваша персональная аффирмация* 🔄
-
-✨ {affirmation} ✨
-
-*Почему эта аффирмация для вас:*
-Эта утверждение резонирует с энергией вашего числа жизненного пути ({life_number or '?'}).
-
-*Как использовать:*
-1. Повторяйте утром, настраиваясь на день
-2. Запишите в дневник или на стикер
-3. Используйте как мантру в течение дня
-4. Визуализируйте, как это проявляется в вашей жизни
-
-*Энергия на сегодня:*
-Каждый день приносит новые возможности. Эта аффирмация поможет вам привлечь позитивные вибрации и оставаться в потоке.
-
-🌟 *Число дня:* {random.randint(1, 9)} (символизирует энергию сегодняшнего дня)
-"""
-    
-    await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
 
 # =====================
 # FLASK WEBHOOK SERVER (остается без изменений)
