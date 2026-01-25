@@ -652,39 +652,39 @@ async def date_analysis_handler(m: Message):
     user_id = m.from_user.id
     date_str = m.text
     
+    print(f"=== ОБРАБОТКА ДАТЫ ===")
+    print(f"Пользователь: {user_id}")
+    print(f"Введенная дата: {date_str}")
+    
     # Получаем историю действий пользователя
     user_history = personalization["user_history"].get(str(user_id), {"actions": []})
     
+    print(f"История действий: {user_history.get('actions', [])}")
+    
     if not user_history["actions"]:
-        # Если нет истории, это портрет
+        print("Нет истории действий → портрет")
         await process_portrait(m, date_str)
         return
     
     # Получаем последнее действие
     last_action = user_history["actions"][-1]["action"]
+    print(f"Последнее действие: {last_action}")
     
     # Маршрутизация по последнему действию
     if "forecast" in last_action:
+        print("Маршрутизация → прогноз")
         await forecast_handler(m, date_str, last_action)
     elif "horoscope" in last_action:
+        print("Маршрутизация → гороскоп")
         await horoscope_handler(m, date_str, last_action)
     elif last_action == "affirmation_request":
+        print("Маршрутизация → аффирмация")
         await affirmation_handler(m, date_str)
     elif last_action == "portrait_request":
+        print("Маршрутизация → портрет")
         await process_portrait(m, date_str)
-    elif last_action == "compatibility_request_general":
-        # Для совместимости нужны две даты, поэтому показываем инструкцию
-        await m.answer(
-            "💞 *Для анализа совместимости* 💞\n\n"
-            "Введите две даты рождения через пробел:\n\n"
-            "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
-            "*Пример:* 15.05.1990 20.08.1985",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
-        )
-        return
     else:
-        # По умолчанию - портрет
+        print("Маршрутизация → портрет (по умолчанию)")
         await process_portrait(m, date_str)
 
 async def process_portrait(m: Message, date_str: str):
