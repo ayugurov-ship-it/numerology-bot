@@ -1184,8 +1184,6 @@ async def affirmation_handler(m: Message, date_str: str):
 # FLASK WEBHOOK SERVER (остается без изменений)
 # =====================
 
-app = Flask(__name__)
-
 @app.route("/")
 def home():
     return "Bot is running"
