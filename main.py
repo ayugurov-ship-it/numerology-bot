@@ -343,45 +343,6 @@ def admin_menu():
         resize_keyboard=True
     )
 
-@app.route(ADMIN_PATH)
-def admin_panel():
-    """Веб-админка"""
-    # Простая проверка (в продакшене нужно добавить аутентификацию)
-    return f"""
-    <html>
-    <head>
-        <title>Админ-панель нумеробота</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-            .stats {{ background: #f5f5f5; padding: 20px; border-radius: 10px; }}
-            h1 {{ color: #333; }}
-            .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
-        </style>
-    </head>
-    <body>
-        <h1>🤖 Админ-панель нумеробота</h1>
-        
-        <div class="stats">
-            <h2>📊 Статистика:</h2>
-            <p><strong>Пользователей:</strong> {stats.get('total_users', 0)}</p>
-            <p><strong>Анализов выполнено:</strong> {stats.get('calculations', 0) + stats.get('compatibility_checks', 0) + stats.get('forecasts', 0) + stats.get('horoscopes', 0)}</p>
-            <p><strong>Прогнозов:</strong> {stats.get('forecasts', 0)}</p>
-            <p><strong>Гороскопов:</strong> {stats.get('horoscopes', 0)}</p>
-        </div>
-        
-        <h2>🔧 Действия:</h2>
-        <a href="/" class="btn">🏠 Главная</a>
-        <a href="/ping" class="btn">🔄 Ping</a>
-        <a href="/admin/stats" class="btn">📈 Детальная статистика</a>
-        
-        <h2>📁 Файлы:</h2>
-        <p><a href="/admin/users.json" target="_blank">users.json</a> ({len(users)} пользователей)</p>
-        <p><a href="/admin/stats.json" target="_blank">stats.json</a></p>
-        <p><a href="/admin/personalization.json" target="_blank">personalization.json</a></p>
-    </body>
-    </html>
-    """
-
 @app.route("/admin/stats.json")
 def admin_stats_json():
     return json.dumps(stats, ensure_ascii=False, indent=2)
@@ -1143,6 +1104,45 @@ async def affirmation_handler(m: Message, date_str: str):
 # =====================
 
 app = Flask(__name__)
+
+@app.route(ADMIN_PATH)
+def admin_panel():
+    """Веб-админка"""
+    # Простая проверка (в продакшене нужно добавить аутентификацию)
+    return f"""
+    <html>
+    <head>
+        <title>Админ-панель нумеробота</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 40px; }}
+            .stats {{ background: #f5f5f5; padding: 20px; border-radius: 10px; }}
+            h1 {{ color: #333; }}
+            .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
+        </style>
+    </head>
+    <body>
+        <h1>🤖 Админ-панель нумеробота</h1>
+        
+        <div class="stats">
+            <h2>📊 Статистика:</h2>
+            <p><strong>Пользователей:</strong> {stats.get('total_users', 0)}</p>
+            <p><strong>Анализов выполнено:</strong> {stats.get('calculations', 0) + stats.get('compatibility_checks', 0) + stats.get('forecasts', 0) + stats.get('horoscopes', 0)}</p>
+            <p><strong>Прогнозов:</strong> {stats.get('forecasts', 0)}</p>
+            <p><strong>Гороскопов:</strong> {stats.get('horoscopes', 0)}</p>
+        </div>
+        
+        <h2>🔧 Действия:</h2>
+        <a href="/" class="btn">🏠 Главная</a>
+        <a href="/ping" class="btn">🔄 Ping</a>
+        <a href="/admin/stats" class="btn">📈 Детальная статистика</a>
+        
+        <h2>📁 Файлы:</h2>
+        <p><a href="/admin/users.json" target="_blank">users.json</a> ({len(users)} пользователей)</p>
+        <p><a href="/admin/stats.json" target="_blank">stats.json</a></p>
+        <p><a href="/admin/personalization.json" target="_blank">personalization.json</a></p>
+    </body>
+    </html>
+    """
 
 @app.route("/")
 def home():
