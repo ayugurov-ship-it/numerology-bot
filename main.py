@@ -343,6 +343,57 @@ def admin_menu():
         resize_keyboard=True
     )
 
+@app.route(ADMIN_PATH)
+def admin_panel():
+    """Веб-админка"""
+    # Простая проверка (в продакшене нужно добавить аутентификацию)
+    return f"""
+    <html>
+    <head>
+        <title>Админ-панель нумеробота</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 40px; }}
+            .stats {{ background: #f5f5f5; padding: 20px; border-radius: 10px; }}
+            h1 {{ color: #333; }}
+            .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
+        </style>
+    </head>
+    <body>
+        <h1>🤖 Админ-панель нумеробота</h1>
+        
+        <div class="stats">
+            <h2>📊 Статистика:</h2>
+            <p><strong>Пользователей:</strong> {stats.get('total_users', 0)}</p>
+            <p><strong>Анализов выполнено:</strong> {stats.get('calculations', 0) + stats.get('compatibility_checks', 0) + stats.get('forecasts', 0) + stats.get('horoscopes', 0)}</p>
+            <p><strong>Прогнозов:</strong> {stats.get('forecasts', 0)}</p>
+            <p><strong>Гороскопов:</strong> {stats.get('horoscopes', 0)}</p>
+        </div>
+        
+        <h2>🔧 Действия:</h2>
+        <a href="/" class="btn">🏠 Главная</a>
+        <a href="/ping" class="btn">🔄 Ping</a>
+        <a href="/admin/stats" class="btn">📈 Детальная статистика</a>
+        
+        <h2>📁 Файлы:</h2>
+        <p><a href="/admin/users.json" target="_blank">users.json</a> ({len(users)} пользователей)</p>
+        <p><a href="/admin/stats.json" target="_blank">stats.json</a></p>
+        <p><a href="/admin/personalization.json" target="_blank">personalization.json</a></p>
+    </body>
+    </html>
+    """
+
+@app.route("/admin/stats.json")
+def admin_stats_json():
+    return json.dumps(stats, ensure_ascii=False, indent=2)
+
+@app.route("/admin/users.json")
+def admin_users_json():
+    return json.dumps(users, ensure_ascii=False, indent=2)
+
+@app.route("/admin/personalization.json")
+def admin_personalization_json():
+    return json.dumps(personalization, ensure_ascii=False, indent=2)
+
 def forecast_period_menu():
     """Меню выбора периода прогноза"""
     return InlineKeyboardMarkup(
@@ -598,6 +649,107 @@ async def admin_button_handler(m: Message):
             "Эта функция доступна только администраторам",
             reply_markup=main_menu(user_id)
         )
+
+# Добавьте после admin_button_handler:
+
+@router.message(lambda m: m.text == "📊 Статистика")
+async def admin_stats(m: Message):
+    user_id = m.from_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
+        return
+    
+    # Формируем статистику
+    total_calculations = (
+        stats.get("calculations", 0) + 
+        stats.get("compatibility_checks", 0) + 
+        stats.get("forecasts", 0) + 
+        stats.get("horoscopes", 0)
+    )
+    
+    stats_text = f"""
+📊 *Статистика бота*
+
+👥 Пользователей всего: {stats.get("total_users", 0)}
+🔄 Активных пользователей: {stats.get("active_users", 0)}
+
+📈 *Анализов выполнено:*
+• Нумерологических портретов: {stats.get("calculations", 0)}
+• Проверок совместимости: {stats.get("compatibility_checks", 0)}
+• Прогнозов на периоды: {stats.get("forecasts", 0)}
+• Персональных гороскопов: {stats.get("horoscopes", 0)}
+• *Всего анализов:* {total_calculations}
+
+📅 *За сегодня ({datetime.now().strftime("%d.%m.%Y")}):*
+• Новых пользователей: {stats.get("daily_stats", {}).get("new_users", 0)}
+• Выполнено анализов: {stats.get("daily_stats", {}).get("calculations", 0)}
+
+🎯 *Популярные функции:*
+1. {max(stats.get("popular_features", {}), key=stats.get("popular_features", {}).get, default="Нет данных")}
+2. {sorted(stats.get("popular_features", {}).items(), key=lambda x: x[1], reverse=True)[1][0] if len(stats.get("popular_features", {})) > 1 else "Нет данных"}
+    """
+    
+    await m.answer(stats_text, parse_mode="Markdown", reply_markup=admin_menu())
+
+@router.message(lambda m: m.text == "👥 Пользователи")
+async def admin_users(m: Message):
+    user_id = m.from_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
+        return
+    
+    total_users = len(users)
+    recent_users = []
+    
+    # Получаем последних 5 пользователей
+    for uid, user_data in list(users.items())[-5:]:
+        username = user_data.get("username", "без username")
+        first_name = user_data.get("first_name", "")
+        last_name = user_data.get("last_name", "")
+        name = f"{first_name} {last_name}".strip() or f"Пользователь {uid[-4:]}"
+        joined = user_data.get("joined", "неизвестно")
+        
+        recent_users.append(f"• {name} (@{username}) - {joined}")
+    
+    users_text = f"""
+👥 *Информация о пользователях*
+
+📊 Всего пользователей: {total_users}
+
+🆕 *Последние 5 пользователей:*
+{chr(10).join(recent_users) if recent_users else "• Нет данных"}
+
+📁 Файл с пользователями: `users.json`
+💾 Размер файла: {Path("users.json").stat().st_size if Path("users.json").exists() else 0} байт
+    """
+    
+    await m.answer(users_text, parse_mode="Markdown", reply_markup=admin_menu())
+
+@router.message(lambda m: m.text == "📢 Рассылка")
+async def admin_broadcast(m: Message):
+    user_id = m.from_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
+        return
+    
+    await m.answer(
+        "📢 *Функция рассылки*\n\n"
+        "Эта функция находится в разработке.\n\n"
+        "Скоро вы сможете отправлять сообщения всем пользователям бота.",
+        parse_mode="Markdown",
+        reply_markup=admin_menu()
+    )
+
+@router.message(lambda m: m.text == "🔙 В главное меню")
+async def back_to_main(m: Message):
+    user_id = m.from_user.id
+    await m.answer(
+        "Возвращаемся в главное меню:",
+        reply_markup=main_menu(user_id)
+    )
 
 @router.message(lambda m: m.text == "ℹ️ О боте")
 async def about_bot(m: Message):
