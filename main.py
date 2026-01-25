@@ -670,6 +670,19 @@ async def date_analysis_handler(m: Message):
         await horoscope_handler(m, date_str, last_action)
     elif last_action == "affirmation_request":
         await affirmation_handler(m, date_str)
+    elif last_action == "portrait_request":
+        await process_portrait(m, date_str)
+    elif last_action == "compatibility_request_general":
+        # Для совместимости нужны две даты, поэтому показываем инструкцию
+        await m.answer(
+            "💞 *Для анализа совместимости* 💞\n\n"
+            "Введите две даты рождения через пробел:\n\n"
+            "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
+            "*Пример:* 15.05.1990 20.08.1985",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
+        return
     else:
         # По умолчанию - портрет
         await process_portrait(m, date_str)
@@ -869,6 +882,109 @@ async def compatibility_analysis_handler(m: Message):
     
     PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
     
+async def horoscope_handler(m: Message, date_str: str, last_action: str):
+    """Обработчик для гороскопов"""
+    user_id = m.from_user.id
+    
+    # Извлекаем тип гороскопа из последнего действия
+    if "_" in last_action:
+        h_type = last_action.split("_")[1]
+    else:
+        h_type = "today"
+    
+    type_names = {
+        "today": "сегодня",
+        "tomorrow": "завтра", 
+        "week": "неделю",
+        "month": "месяц"
+    }
+    
+    period_display = type_names.get(h_type, "сегодня")
+    
+    await m.answer(f"🌟 Создаю гороскоп на {period_display}...")
+    
+    # Обновляем статистику
+    if "horoscopes" in stats:
+        stats["horoscopes"] += 1
+    save_stats(stats)
+    
+    # Создаем промпт для гороскопа
+    prompt = f"""
+Создай персональный нумерологический гороскоп на {period_display} для человека, родившегося {date_str}.
+Текущая дата: {datetime.now().strftime("%d.%m.%Y")}.
+
+Число жизненного пути: {NumerologyFeatures.calculate_life_path_number(date_str) or 'не определено'}.
+
+Включи:
+1. Общую энергетику дня/периода
+2. Благоприятные сферы
+3. Возможные вызовы
+4. Совет от чисел
+5. Число удачи на период
+
+Будь вдохновляющим и мотивирующим. Используй метафоры и образы.
+"""
+    
+    # Получаем гороскоп
+    horoscope = await ask_groq(prompt, "horoscope")
+    
+    # Добавляем персональную аффирмацию
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    final_response = f"""
+🌟 *Ваш персональный гороскоп* 🌟
+*На {period_display}*
+
+{horoscope}
+
+🔄 *Аффирмация дня:*
+{affirmation}
+
+✨ *Число жизненного пути:* {NumerologyFeatures.calculate_life_path_number(date_str) or '?'}
+"""
+    
+    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    PersonalizationEngine.update_user_profile(
+        user_id, 
+        f"horoscope_generated_{h_type}",
+        {"date": date_str}
+    )
+
+async def affirmation_handler(m: Message, date_str: str):
+    """Обработчик для аффирмаций"""
+    user_id = m.from_user.id
+    
+    # Генерируем аффирмацию
+    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    
+    # Получаем число жизненного пути для контекста
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Создаем красивый ответ
+    affirmation_text = f"""
+🔄 *Ваша персональная аффирмация* 🔄
+
+✨ {affirmation} ✨
+
+*Почему эта аффирмация для вас:*
+Эта утверждение резонирует с энергией вашего числа жизненного пути ({life_number or '?'}).
+
+*Как использовать:*
+1. Повторяйте утром, настраиваясь на день
+2. Запишите в дневник или на стикер
+3. Используйте как мантру в течение дня
+4. Визуализируйте, как это проявляется в вашей жизни
+
+*Энергия на сегодня:*
+Каждый день приносит новые возможности. Эта аффирмация поможет вам привлечь позитивные вибрации и оставаться в потоке.
+
+🌟 *Число дня:* {random.randint(1, 9)} (символизирует энергию сегодняшнего дня)
+"""
+    
+    await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    
+    PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
 
 # =====================
 # FLASK WEBHOOK SERVER (остается без изменений)
