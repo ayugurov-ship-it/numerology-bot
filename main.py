@@ -350,18 +350,6 @@ def admin_menu():
         resize_keyboard=True
     )
 
-@app.route("/admin/stats.json")
-def admin_stats_json():
-    return json.dumps(stats, ensure_ascii=False, indent=2)
-
-@app.route("/admin/users.json")
-def admin_users_json():
-    return json.dumps(users, ensure_ascii=False, indent=2)
-
-@app.route("/admin/personalization.json")
-def admin_personalization_json():
-    return json.dumps(personalization, ensure_ascii=False, indent=2)
-
 def forecast_period_menu():
     """Меню выбора периода прогноза"""
     return InlineKeyboardMarkup(
@@ -1179,29 +1167,6 @@ async def affirmation_handler(m: Message, date_str: str):
     await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
-
-# =====================
-# FLASK WEBHOOK SERVER (остается без изменений)
-# =====================
-
-@app.route("/")
-def home():
-    return "Bot is running"
-
-@app.route("/ping")
-def ping():
-    return "pong"
-
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
-    data = request.get_json()
-    update = types.Update(**data)
-
-    asyncio.run_coroutine_threadsafe(
-        dp.feed_update(bot, update),
-        loop
-    )
-    return "ok"
 
 # =====================
 # EVENT LOOP
