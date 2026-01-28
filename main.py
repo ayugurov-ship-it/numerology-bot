@@ -1254,7 +1254,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 """
     elif h_type == "week":
         # Промпт для недели
-    prompt = f"""
+        prompt = f"""
 Ты - профессиональный психолог и нумеролог-консультант премиум-уровня.
 
 Создай персональный нумерологический гороскоп на неделю ({date_description}) для человека, родившегося {date_str}.
