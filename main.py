@@ -302,6 +302,35 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
         print("GROQ ERROR:", e)
         return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
+async def generate_ai_affirmation(date_str: str, life_number: int, target_date_str: str) -> str:
+    prompt = f"""
+Ты — профессиональный нумеролог и психолог.
+
+Создай короткую персональную аффирмацию на один день.
+
+Данные:
+Дата рождения: {date_str}
+Число жизненного пути: {life_number}
+Дата дня: {target_date_str}
+
+Требования:
+- 1 предложение
+- от первого лица
+- без эзотерических терминов
+- без пафоса
+- практично и поддерживающе
+- не длиннее 20 слов
+
+Верни только текст аффирмации, без пояснений.
+"""
+
+    try:
+        result = await ask_groq(prompt, "default")
+        return result.strip()
+    except:
+        # fallback на старую логику
+        return NumerologyFeatures.generate_daily_affirmation(date_str)
+        
 # =====================
 # BOT INIT
 # =====================
@@ -906,7 +935,11 @@ async def process_portrait(m: Message, date_str: str):
     personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
     
     # Добавляем аффирмацию в конце
-    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    affirmation = await generate_ai_affirmation(
+    date_str,
+    life_number,
+    target_date.strftime("%d.%m.%Y")
+    )
     
     final_response = f"""
 ✨ *Ваш нумерологический портрет* ✨
@@ -1204,7 +1237,11 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     horoscope = await ask_groq(prompt, "horoscope")
     
     # Добавляем персональную аффирмацию
-    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    affirmation = await generate_ai_affirmation(
+    date_str,
+    life_number,
+    target_date.strftime("%d.%m.%Y")
+    )
     
     final_response = f"""
 🌟 *Ваш персональный гороскоп* 🌟
@@ -1233,7 +1270,11 @@ async def affirmation_handler(m: Message, date_str: str):
     user_id = m.from_user.id
     
     # Генерируем аффирмацию
-    affirmation = NumerologyFeatures.generate_daily_affirmation(date_str)
+    affirmation = await generate_ai_affirmation(
+    date_str,
+    life_number,
+    target_date.strftime("%d.%m.%Y")
+    )
     
     # Получаем число жизненного пути для контекста
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
