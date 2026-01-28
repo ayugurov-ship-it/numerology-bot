@@ -938,7 +938,7 @@ async def process_portrait(m: Message, date_str: str):
     affirmation = await generate_ai_affirmation(
     date_str,
     life_number,
-    target_date.strftime("%d.%m.%Y")
+    datetime.now().strftime("%d.%m.%Y")  # Используем текущую дату
     )
     
     final_response = f"""
@@ -1140,9 +1140,12 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         else:
             target_date_end = datetime(year, month + 1, 1) - timedelta(days=1)
         date_description = f"с {target_date_start.strftime('%d.%m.%Y')} по {target_date_end.strftime('%d.%m.%Y')} (на месяц)"
+        # Для аффирмации используем сегодняшнюю дату
+        target_date_for_affirmation = today
     else:
         target_date = today
         date_description = f"{today.strftime('%d.%m.%Y')} (сегодня)"
+        target_date_for_affirmation = today
     
     await m.answer(f"🌟 Создаю гороскоп на {period_display}...")
     
@@ -1236,11 +1239,16 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     # Получаем гороскоп
     horoscope = await ask_groq(prompt, "horoscope")
     
+    # Определяем дату для аффирмации
+    if h_type in ["today", "tomorrow"]:
+        affirmation_date = target_date
+    else:
+        affirmation_date = today
     # Добавляем персональную аффирмацию
     affirmation = await generate_ai_affirmation(
     date_str,
     life_number,
-    target_date.strftime("%d.%m.%Y")
+    datetime.now().strftime("%d.%m.%Y")  # Используем текущую дату
     )
     
     final_response = f"""
@@ -1269,15 +1277,18 @@ async def affirmation_handler(m: Message, date_str: str):
     """Обработчик для аффирмаций"""
     user_id = m.from_user.id
     
+    # Получаем число жизненного пути
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    
+    # Используем текущую дату для аффирмации
+    today = datetime.now()
+    
     # Генерируем аффирмацию
     affirmation = await generate_ai_affirmation(
     date_str,
     life_number,
-    target_date.strftime("%d.%m.%Y")
+    datetime.now().strftime("%d.%m.%Y")  # Используем текущую дату
     )
-    
-    # Получаем число жизненного пути для контекста
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
     
     # Создаем красивый ответ
     affirmation_text = f"""
