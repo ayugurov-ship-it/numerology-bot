@@ -313,7 +313,7 @@ async def generate_ai_affirmation(date_str: str, life_number: int, target_date_s
     
     period_display = period_names.get(period, "день")
     prompt = f"""
-Ты - профессиональный психолог и нумеролог-консультант.
+Ты - профессиональный психолог и нумеролог-консультант премиум-уровня.
 
 Создай персональную аффирмацию на {period_display}.
 
@@ -1255,7 +1255,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     elif h_type == "week":
         # Промпт для недели
     prompt = f"""
-Ты - профессиональный нумеролог-консультант премиум-уровня.
+Ты - профессиональный психолог и нумеролог-консультант премиум-уровня.
 
 Создай персональный нумерологический гороскоп на неделю ({date_description}) для человека, родившегося {date_str}.
 Число жизненного пути: {life_number if life_number else 'не определено'}.
