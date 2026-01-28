@@ -314,7 +314,7 @@ async def generate_ai_affirmation(date_str: str, life_number: int, target_date_s
 
     period_display = period_names.get(period, "день")
     prompt = f"""
-    Ты — профессиональный психолог и нумеролог-консультант.
+        Ты — профессиональный психолог и нумеролог-консультант.
 
     Создай персональную аффирмацию на {period_display}.
 
