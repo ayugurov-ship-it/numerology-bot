@@ -303,8 +303,7 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
         return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
 async def generate_ai_affirmation(date_str: str, life_number: int, target_date_str: str, period: str = "day") -> str:
-"""Генерация персональной аффирмации (AI + fallback)"""
-
+"""Генерация персональной аффирмации (AI + fallback)""
 
     period_names = {
     "day": "день",
