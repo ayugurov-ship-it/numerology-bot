@@ -1,36 +1,33 @@
 import os
-# import json
-# import asyncio
-# import requests
-# import aiohttp
-# import logging
-# logging.basicConfig(level=logging.INFO)
-# from pathlib import Path
-# from datetime import datetime, timedelta
-# from flask import Flask, request, render_template_string
-# from threading import Thread
-# from collections import defaultdict
-# import random
+import json
+import asyncio
+import requests
+import aiohttp
+import logging
+logging.basicConfig(level=logging.INFO)
+from pathlib import Path
+from datetime import datetime, timedelta
+from flask import Flask, request, render_template_string
+from threading import Thread
+from collections import defaultdict
+import random
 
-# from aiogram import Bot, Dispatcher, Router, types
-# from aiogram.filters import CommandStart, Command
-# from aiogram.types import (
-    # ReplyKeyboardMarkup,
-    # KeyboardButton,
-    # Message,
-    # InlineKeyboardMarkup,
-    # InlineKeyboardButton
-# )
+from aiogram import Bot, Dispatcher, Router, types
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 
-=====================
-FLASK APP CREATION (ДОЛЖНО БЫТЬ ПЕРВЫМ!)
-=====================
-# app = Flask(__name__)
+# FLASK APP CREATION (ДОЛЖНО БЫТЬ ПЕРВЫМ!)
+# =========================================
+app = Flask(__name__)
 
-=====================
-CONFIG
-=====================
-
+# CONFIG
+# ======
 # BOT_TOKEN = os.getenv("BOT_TOKEN")
 # GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # BASE_URL = os.getenv("BASE_URL")
