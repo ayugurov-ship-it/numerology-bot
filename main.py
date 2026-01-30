@@ -91,12 +91,15 @@ def load_stats():
     return {
         "total_users": 0,
         "active_users": 0,
+        "inactive_users": 0,  # Добавьте эту строку
         "calculations": 0,
         "compatibility_checks": 0,
         "forecasts": 0,
         "horoscopes": 0,
         "daily_stats": defaultdict(int),
-        "popular_features": defaultdict(int)
+        "popular_features": defaultdict(int),
+        "user_registration_dates": {},  # Добавьте эту строку
+        "user_last_activity": {}  # Добавьте эту строку
     }
 
 def save_stats(data):
@@ -540,16 +543,37 @@ async def start(m: Message):
     first_name = m.from_user.first_name or ""
     last_name = m.from_user.last_name or ""
     
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Проверяем, новый ли пользователь
+    is_new_user = str(user_id) not in users
+    
     # Обновляем информацию о пользователе
-    if str(user_id) not in users:
+    if is_new_user:
         users[str(user_id)] = {
             "username": username,
             "first_name": first_name,
             "last_name": last_name,
-            "joined": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "last_active": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "joined": now_str,
+            "last_active": now_str,
+            "total_requests": 0
         }
-        save_users(users)
+        # Обновляем статистику
+        stats["total_users"] = len(users)
+        stats["daily_stats"]["new_users"] += 1
+        
+        # Сохраняем дату регистрации в статистике
+        stats["user_registration_dates"][str(user_id)] = now_str
+    else:
+        # Обновляем время последней активности
+        users[str(user_id)]["last_active"] = now_str
+    
+    # Сохраняем время последней активности в статистике
+    stats["user_last_activity"][str(user_id)] = now_str
+    
+    save_users(users)
+    save_stats(stats)
     
     # Персонализированное приветствие
     user_name = format_user_name(m.from_user)
@@ -569,8 +593,31 @@ async def start(m: Message):
         reply_markup=main_menu(user_id)
     )
     
-    # Обновляем статистику
+    # Обновляем профиль
     PersonalizationEngine.update_user_profile(user_id, "start")
+
+def calculate_active_users():
+    """Расчет активных пользователей (активны в последние 30 дней)"""
+    now = datetime.now()
+    active_count = 0
+    inactive_count = 0
+    
+    for user_id_str, user_data in users.items():
+        if "last_active" in user_data:
+            try:
+                last_active = datetime.strptime(user_data["last_active"], "%Y-%m-%d %H:%M:%S")
+                days_inactive = (now - last_active).days
+                
+                if days_inactive <= 30:
+                    active_count += 1
+                else:
+                    inactive_count += 1
+            except:
+                active_count += 1  # Если не можем определить, считаем активным
+        else:
+            active_count += 1  # Если нет данных, считаем активным
+    
+    return active_count, inactive_count
 
 @router.message(lambda m: m.text == "✨ Мой нумерологический портрет")
 async def numerology_portrait(m: Message):
@@ -749,6 +796,12 @@ async def admin_stats(m: Message):
         await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
         return
     
+    # Пересчитываем активных пользователей
+    active_users, inactive_users = calculate_active_users()
+    stats["active_users"] = active_users
+    stats["inactive_users"] = inactive_users
+    save_stats(stats)
+    
     # Формируем статистику
     total_calculations = (
         stats.get("calculations", 0) + 
@@ -757,26 +810,53 @@ async def admin_stats(m: Message):
         stats.get("horoscopes", 0)
     )
     
+    # Рассчитываем среднее количество запросов на пользователя
+    total_users = len(users)
+    avg_requests = total_calculations / total_users if total_users > 0 else 0
+    
+    # Статистика по датам регистрации
+    current_year = datetime.now().year
+    users_this_month = 0
+    users_this_year = 0
+    
+    for reg_date in stats.get("user_registration_dates", {}).values():
+        try:
+            reg_datetime = datetime.strptime(reg_date, "%Y-%m-%d %H:%M:%S")
+            if reg_datetime.year == current_year:
+                users_this_year += 1
+                if reg_datetime.month == datetime.now().month:
+                    users_this_month += 1
+        except:
+            pass
+    
     stats_text = f"""
 📊 *Статистика бота*
 
-👥 Пользователей всего: {stats.get("total_users", 0)}
-🔄 Активных пользователей: {stats.get("active_users", 0)}
+👥 *Пользователи:*
+• Всего пользователей: {total_users}
+• Активных (последние 30 дней): {active_users}
+• Неактивных (более 30 дней): {inactive_users}
+• Новых в этом году: {users_this_year}
+• Новых в этом месяце: {users_this_month}
 
-📈 *Анализов выполнено:*
+📈 *Анализов выполнено (всего: {total_calculations}):*
 • Нумерологических портретов: {stats.get("calculations", 0)}
 • Проверок совместимости: {stats.get("compatibility_checks", 0)}
 • Прогнозов на периоды: {stats.get("forecasts", 0)}
 • Персональных гороскопов: {stats.get("horoscopes", 0)}
-• *Всего анализов:* {total_calculations}
+• Аффирмаций: {stats.get("daily_stats", {}).get("affirmations", 0)}
+
+📊 *Средние показатели:*
+• Запросов на пользователя: {avg_requests:.1f}
+• Новых пользователей в день: {stats.get('daily_stats', {}).get('new_users_today', 0)}
 
 📅 *За сегодня ({datetime.now().strftime("%d.%m.%Y")}):*
 • Новых пользователей: {stats.get("daily_stats", {}).get("new_users", 0)}
 • Выполнено анализов: {stats.get("daily_stats", {}).get("calculations", 0)}
 
 🎯 *Популярные функции:*
-1. {max(stats.get("popular_features", {}), key=stats.get("popular_features", {}).get, default="Нет данных")}
-2. {sorted(stats.get("popular_features", {}).items(), key=lambda x: x[1], reverse=True)[1][0] if len(stats.get("popular_features", {})) > 1 else "Нет данных"}
+1. {max(stats.get("popular_features", {}), key=stats.get("popular_features", {}).get, default="Нет данных")} ({stats.get("popular_features", {}).get(max(stats.get("popular_features", {}), key=stats.get("popular_features", {}).get, default=""), 0)} раз)
+2. {sorted(stats.get("popular_features", {}).items(), key=lambda x: x[1], reverse=True)[1][0] if len(stats.get("popular_features", {})) > 1 else "Нет данных"} ({sorted(stats.get("popular_features", {}).items(), key=lambda x: x[1], reverse=True)[1][1] if len(stats.get("popular_features", {})) > 1 else 0} раз)
     """
     
     await m.answer(stats_text, parse_mode="Markdown", reply_markup=admin_menu())
@@ -791,27 +871,60 @@ async def admin_users(m: Message):
     
     total_users = len(users)
     recent_users = []
+    inactive_users_list = []
     
-    # Получаем последних 5 пользователей
-    for uid, user_data in list(users.items())[-5:]:
+    now = datetime.now()
+    
+    # Получаем последних 5 пользователей и проверяем активность
+    for uid, user_data in list(users.items())[-10:]:  # Последние 10
         username = user_data.get("username", "без username")
         first_name = user_data.get("first_name", "")
         last_name = user_data.get("last_name", "")
         name = f"{first_name} {last_name}".strip() or f"Пользователь {uid[-4:]}"
         joined = user_data.get("joined", "неизвестно")
+        last_active = user_data.get("last_active", "никогда")
         
-        recent_users.append(f"• {name} (@{username}) - {joined}")
+        # Определяем активность
+        try:
+            if last_active != "никогда":
+                last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
+                days_inactive = (now - last_active_dt).days
+                status = "🟢" if days_inactive <= 7 else "🟡" if days_inactive <= 30 else "🔴"
+            else:
+                status = "⚪"
+        except:
+            status = "⚪"
+        
+        user_info = f"{status} {name} (@{username})"
+        user_info += f"\n   📅 Регистрация: {joined}"
+        user_info += f"\n   ⏱️ Последняя активность: {last_active}"
+        
+        # Проверяем неактивность
+        try:
+            if last_active != "никогда":
+                last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
+                days_inactive = (now - last_active_dt).days
+                if days_inactive > 30:
+                    inactive_users_list.append(f"{name} - неактивен {days_inactive} дней")
+        except:
+            pass
+        
+        recent_users.append(user_info)
     
     users_text = f"""
 👥 *Информация о пользователях*
 
 📊 Всего пользователей: {total_users}
 
-🆕 *Последние 5 пользователей:*
+📈 *Последние 10 пользователей (⚪=нет данных, 🟢=активен, 🟡=давно, 🔴=неактивен):*
 {chr(10).join(recent_users) if recent_users else "• Нет данных"}
+
+📉 *Неактивные пользователи (более 30 дней):*
+{chr(10).join(inactive_users_list[:5]) if inactive_users_list else "• Нет неактивных пользователей"}
 
 📁 Файл с пользователями: `users.json`
 💾 Размер файла: {Path("users.json").stat().st_size if Path("users.json").exists() else 0} байт
+💾 Пользователей в файле: {len(users)}
     """
     
     await m.answer(users_text, parse_mode="Markdown", reply_markup=admin_menu())
@@ -937,6 +1050,21 @@ async def process_portrait(m: Message, date_str: str):
     # Обновляем статистику
     if "calculations" in stats:
         stats["calculations"] += 1
+    if "popular_features" in stats:
+        stats["popular_features"]["portrait"] = stats["popular_features"].get("portrait", 0) + 1
+    if "daily_stats" in stats:
+        stats["daily_stats"]["calculations"] = stats["daily_stats"].get("calculations", 0) + 1
+    
+    # Обновляем активность пользователя
+    user_id_str = str(user_id)
+    if user_id_str in users:
+        users[user_id_str]["last_active"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        users[user_id_str]["total_requests"] = users[user_id_str].get("total_requests", 0) + 1
+        save_users(users)
+    
+    # Обновляем общую статистику активности
+    stats["user_last_activity"][user_id_str] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     save_stats(stats)
     
     # Получаем число жизненного пути
@@ -1530,6 +1658,62 @@ async def affirmation_handler(m: Message, date_str: str):
     await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
     
     PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
+
+@app.route("/admin/full_report")
+def admin_full_report():
+    """Полный отчет по пользователям"""
+    report = []
+    now = datetime.now()
+    
+    report.append("📊 ПОЛНЫЙ ОТЧЕТ ПО ПОЛЬЗОВАТЕЛЯМ")
+    report.append(f"Дата генерации: {now.strftime('%d.%m.%Y %H:%M:%S')}")
+    report.append(f"Всего пользователей: {len(users)}")
+    report.append("=" * 50)
+    
+    active_count = 0
+    inactive_count = 0
+    
+    for uid, user_data in sorted(users.items(), key=lambda x: x[1].get("joined", "")):
+        username = user_data.get("username", "без username")
+        first_name = user_data.get("first_name", "")
+        last_name = user_data.get("last_name", "")
+        name = f"{first_name} {last_name}".strip() or f"User{uid[-6:]}"
+        joined = user_data.get("joined", "неизвестно")
+        last_active = user_data.get("last_active", "никогда")
+        total_requests = user_data.get("total_requests", 0)
+        
+        # Определяем активность
+        status = "НЕТ ДАННЫХ"
+        try:
+            if last_active != "никогда":
+                last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
+                days_inactive = (now - last_active_dt).days
+                if days_inactive <= 7:
+                    status = "АКТИВЕН"
+                    active_count += 1
+                elif days_inactive <= 30:
+                    status = "ДАВНО"
+                    active_count += 1
+                else:
+                    status = f"НЕАКТИВЕН ({days_inactive} дней)"
+                    inactive_count += 1
+            else:
+                status = "НЕТ АКТИВНОСТИ"
+        except:
+            status = "ОШИБКА ДАННЫХ"
+        
+        user_line = f"👤 ID: {uid} | {name} | @{username}"
+        user_line += f"\n   📅 Регистрация: {joined}"
+        user_line += f"\n   ⏱️ Последняя активность: {last_active}"
+        user_line += f"\n   📊 Запросов: {total_requests} | Статус: {status}"
+        user_line += f"\n   {'─'*40}"
+        
+        report.append(user_line)
+    
+    report.append("=" * 50)
+    report.append(f"ИТОГО: Активных: {active_count} | Неактивных: {inactive_count}")
+    
+    return "<pre>" + "\n".join(report) + "</pre>"
 
 # =====================
 # EVENT LOOP
