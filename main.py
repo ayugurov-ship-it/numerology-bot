@@ -1,16 +1,22 @@
+# main.py
 import os
 import json
 import asyncio
-import requests
 import aiohttp
 import logging
-logging.basicConfig(level=logging.INFO)
 from pathlib import Path
 from datetime import datetime, timedelta
-from flask import Flask, request, render_template_string
-from threading import Thread
+from typing import Dict, Any, Optional, List
 from collections import defaultdict
 import random
+
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from contextlib import asynccontextmanager
+from pydantic import BaseModel, Field
 
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart, Command
@@ -19,29 +25,202 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
+    Update
 )
 
 # =====================
-# FLASK APP CREATION (ДОЛЖНО БЫТЬ ПЕРВЫМ!)
+# CONFIG & LOGGING
 # =====================
-app = Flask(__name__)
 
-# =====================
-# CONFIG
-# =====================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BASE_URL = os.getenv("BASE_URL")
-ADMIN_IDS = [260219938]  # ЗАМЕНИТЕ НА СВОЙ ID
-
+BASE_URL = os.getenv("BASE_URL", "https://your-domain.com")
+ADMIN_IDS = [260219938]
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your-secret-token")
 MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = BASE_URL + WEBHOOK_PATH
 ADMIN_PATH = "/admin"
 
-# Расширенный промпт для разных типов анализа
+# =====================
+# PYDANTIC MODELS
+# =====================
+
+class UserCreate(BaseModel):
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+class UserStats(BaseModel):
+    user_id: str
+    username: Optional[str]
+    first_name: Optional[str]
+    last_name: Optional[str]
+    joined: str
+    last_active: str
+    total_requests: int = 0
+
+class StatsResponse(BaseModel):
+    total_users: int
+    active_users: int
+    inactive_users: int
+    calculations: int
+    compatibility_checks: int
+    forecasts: int
+    horoscopes: int
+    daily_stats: Dict[str, int]
+    popular_features: Dict[str, int]
+
+# =====================
+# FASTAPI APP WITH LIFESPAN
+# =====================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Управление жизненным циклом приложения"""
+    # Запуск
+    logger.info("Starting Numerology Bot...")
+    
+    # Инициализация файлов хранения
+    init_storage_files()
+    
+    # Установка вебхука
+    if BOT_TOKEN and BASE_URL:
+        webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
+        try:
+            await bot.set_webhook(
+                url=webhook_url,
+                secret_token=WEBHOOK_SECRET,
+                drop_pending_updates=True,
+                max_connections=40
+            )
+            logger.info(f"Webhook установлен: {webhook_url}")
+        except Exception as e:
+            logger.error(f"Ошибка установки вебхука: {e}")
+    
+    yield
+    
+    # Завершение
+    logger.info("Shutting down Numerology Bot...")
+    try:
+        await bot.delete_webhook()
+        await bot.session.close()
+    except Exception as e:
+        logger.error(f"Ошибка при завершении: {e}")
+
+app = FastAPI(
+    title="Numerology Bot API",
+    description="Telegram бот для нумерологии с AI",
+    version="2.0.0",
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+security = HTTPBearer()
+
+# =====================
+# STORAGE FUNCTIONS
+# =====================
+
+USERS_FILE = Path("users.json")
+STATS_FILE = Path("stats.json")
+PERSONALIZATION_FILE = Path("personalization.json")
+
+def init_storage_files():
+    """Инициализация файлов хранения"""
+    for file in [USERS_FILE, STATS_FILE, PERSONALIZATION_FILE]:
+        if not file.exists():
+            if file == USERS_FILE:
+                file.write_text(json.dumps({}, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif file == STATS_FILE:
+                default_stats = {
+                    "total_users": 0,
+                    "active_users": 0,
+                    "inactive_users": 0,
+                    "calculations": 0,
+                    "compatibility_checks": 0,
+                    "forecasts": 0,
+                    "horoscopes": 0,
+                    "daily_stats": defaultdict(int),
+                    "popular_features": defaultdict(int),
+                    "user_registration_dates": {},
+                    "user_last_activity": {}
+                }
+                file.write_text(json.dumps(default_stats, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif file == PERSONALIZATION_FILE:
+                file.write_text(json.dumps({"user_preferences": {}, "user_history": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info(f"Создан файл: {file}")
+
+def load_users() -> Dict:
+    if USERS_FILE.exists():
+        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
+    return {}
+
+def save_users(data: Dict):
+    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def load_stats() -> Dict:
+    if STATS_FILE.exists():
+        return json.loads(STATS_FILE.read_text(encoding="utf-8"))
+    return {
+        "total_users": 0,
+        "active_users": 0,
+        "inactive_users": 0,
+        "calculations": 0,
+        "compatibility_checks": 0,
+        "forecasts": 0,
+        "horoscopes": 0,
+        "daily_stats": defaultdict(int),
+        "popular_features": defaultdict(int),
+        "user_registration_dates": {},
+        "user_last_activity": {}
+    }
+
+def save_stats(data: Dict):
+    STATS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def load_personalization() -> Dict:
+    if PERSONALIZATION_FILE.exists():
+        return json.loads(PERSONALIZATION_FILE.read_text(encoding="utf-8"))
+    return {"user_preferences": {}, "user_history": {}}
+
+def save_personalization(data: Dict):
+    PERSONALIZATION_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# Глобальные переменные
+users = load_users()
+stats = load_stats()
+personalization = load_personalization()
+
+# =====================
+# AIOGRAM BOT INIT
+# =====================
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+router = Router()
+dp.include_router(router)
+
+# =====================
+# CONSTANTS
+# =====================
+
 GROQ_SYSTEM_PROMPTS = {
     "default": """Ты — профессиональный нумеролог-консультант с 20-летним опытом.
 Твоя задача — рассчитывать нумерологические значения и давать практические рекомендации.
@@ -67,56 +246,6 @@ GROQ_SYSTEM_PROMPTS = {
 Будь креативным, но реалистичным."""
 }
 
-
-
-# =====================
-# USERS STORAGE & PERSONALIZATION
-# =====================
-
-USERS_FILE = Path("users.json")
-STATS_FILE = Path("stats.json")
-PERSONALIZATION_FILE = Path("personalization.json")
-
-def load_users():
-    if USERS_FILE.exists():
-        return json.loads(USERS_FILE.read_text(encoding="utf-8"))
-    return {}
-
-def save_users(data):
-    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def load_stats():
-    if STATS_FILE.exists():
-        return json.loads(STATS_FILE.read_text(encoding="utf-8"))
-    return {
-        "total_users": 0,
-        "active_users": 0,
-        "inactive_users": 0,  # Добавьте эту строку
-        "calculations": 0,
-        "compatibility_checks": 0,
-        "forecasts": 0,
-        "horoscopes": 0,
-        "daily_stats": defaultdict(int),
-        "popular_features": defaultdict(int),
-        "user_registration_dates": {},  # Добавьте эту строку
-        "user_last_activity": {}  # Добавьте эту строку
-    }
-
-def save_stats(data):
-    STATS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def load_personalization():
-    if PERSONALIZATION_FILE.exists():
-        return json.loads(PERSONALIZATION_FILE.read_text(encoding="utf-8"))
-    return {"user_preferences": {}, "user_history": {}}
-
-def save_personalization(data):
-    PERSONALIZATION_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-users = load_users()
-stats = load_stats()
-personalization = load_personalization()
-
 # =====================
 # PERSONALIZATION ENGINE
 # =====================
@@ -124,7 +253,6 @@ personalization = load_personalization()
 class PersonalizationEngine:
     @staticmethod
     def update_user_profile(user_id: int, action: str, data: dict = None):
-        """Обновление профиля пользователя для персонализации"""
         user_id_str = str(user_id)
         
         if user_id_str not in personalization["user_history"]:
@@ -134,14 +262,12 @@ class PersonalizationEngine:
                 "last_interaction": datetime.now().isoformat()
             }
         
-        # Записываем действие
         personalization["user_history"][user_id_str]["actions"].append({
             "action": action,
             "timestamp": datetime.now().isoformat(),
             "data": data
         })
         
-        # Ограничиваем историю последними 50 действиями
         if len(personalization["user_history"][user_id_str]["actions"]) > 50:
             personalization["user_history"][user_id_str]["actions"] = personalization["user_history"][user_id_str]["actions"][-50:]
         
@@ -149,36 +275,22 @@ class PersonalizationEngine:
     
     @staticmethod
     def get_user_preferences(user_id: int) -> dict:
-        """Получение предпочтений пользователя"""
         user_id_str = str(user_id)
         return personalization["user_history"].get(user_id_str, {}).get("preferences", {})
     
     @staticmethod
     def personalize_response(user_id: int, base_response: str, feature_type: str) -> str:
-        """Персонализация ответа на основе истории пользователя"""
         user_history = personalization["user_history"].get(str(user_id), {})
         actions = user_history.get("actions", [])
         
         if len(actions) < 3:
             return base_response
         
-        # Анализируем предыдущие интересы
         recent_actions = [a["action"] for a in actions[-5:]]
-        
-        # Добавляем персонализированное вступление
-        personalized_intros = [
-            "Исходя из вашего интереса к саморазвитию, ",
-            "Учитывая ваш предыдущий запрос, ",
-            "Основываясь на вашей истории обращений, ",
-            "С учетом ваших интересов, "
-        ]
-        
-        # Проверяем, есть ли повторяющиеся темы
         action_counts = {}
         for action in recent_actions:
             action_counts[action] = action_counts.get(action, 0) + 1
         
-        # Если пользователь часто запрашивает определенный тип анализа
         for action, count in action_counts.items():
             if count >= 2:
                 if "relationship" in action:
@@ -189,21 +301,16 @@ class PersonalizationEngine:
         return base_response
 
 # =====================
-# UNIQUE FEATURES
+# NUMEROLOGY FEATURES
 # =====================
 
 class NumerologyFeatures:
-    """Уникальные фичи нумерологического бота"""
-    
     @staticmethod
-    def calculate_life_path_number(date_str: str) -> int:
-        """Расчет числа жизненного пути"""
+    def calculate_life_path_number(date_str: str) -> Optional[int]:
         try:
-            # Убираем точки и получаем цифры
             digits = date_str.replace('.', '')
             total = sum(int(d) for d in digits)
             
-            # Сокращаем до одной цифры (кроме мастер-чисел 11, 22, 33)
             while total > 9 and total not in [11, 22, 33]:
                 total = sum(int(d) for d in str(total))
             
@@ -212,28 +319,7 @@ class NumerologyFeatures:
             return None
     
     @staticmethod
-    def get_compatibility_type(dates: tuple) -> str:
-        """Определение типа совместимости"""
-        num1 = NumerologyFeatures.calculate_life_path_number(dates[0])
-        num2 = NumerologyFeatures.calculate_life_path_number(dates[1])
-        
-        if not num1 or not num2:
-            return "general"
-        
-        # Определяем тип совместимости на основе чисел
-        
-        
-        pair = (num1, num2) if num1 <= num2 else (num2, num1)
-        
-        for comp_type, pairs in compatible_nums.items():
-            if pair in pairs:
-                return comp_type
-        
-        return "general"
-    
-    @staticmethod
     def generate_daily_affirmation(date_str: str) -> str:
-        """Генерация персональной аффирмации на день"""
         life_number = NumerologyFeatures.calculate_life_path_number(date_str)
         
         affirmations = {
@@ -252,36 +338,21 @@ class NumerologyFeatures:
         }
         
         return affirmations.get(life_number, "Я принимаю сегодняшний день с благодарностью и открытостью")
-    
-    @staticmethod
-    def calculate_favorable_days(date_str: str, month: str) -> list:
-        """Расчет благоприятных дней на месяц"""
-        life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-        
-        # Логика расчета благоприятных дней на основе числа
-        favorable_days = []
-        base_days = list(range(1, 31))
-        
-        if life_number:
-            # Фильтруем дни, которые соответствуют вибрации числа
-            favorable_days = [day for day in base_days if day % life_number == 0 or str(life_number) in str(day)]
-        
-        return favorable_days[:5]  # Возвращаем 5 наиболее благоприятных дней
 
 # =====================
-# GROK API
+# GROQ API
 # =====================
 
 async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
     url = "https://api.groq.com/openai/v1/chat/completions"
-
+    
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
-
+    
     data = {
-        "model": "llama-3.1-8b-instant",
+        "model": MODEL_NAME,
         "messages": [
             {"role": "system", "content": GROQ_SYSTEM_PROMPTS[system_prompt_key]},
             {"role": "user", "content": prompt}
@@ -289,25 +360,22 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
         "temperature": 0.6,
         "max_tokens": 1500
     }
-
+    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    print(f"GROQ API ERROR {resp.status}: {error_text}")
+                    logger.error(f"GROQ API ERROR {resp.status}: {error_text}")
                     return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
                     
                 result = await resp.json()
                 return result["choices"][0]["message"]["content"]
-
     except Exception as e:
-        print("GROQ ERROR:", e)
+        logger.error(f"GROQ ERROR: {e}")
         return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
 async def generate_ai_affirmation(date_str: str, life_number: int, target_date_str: str, period: str = "day") -> str:
-    """Генерация персональной аффирмации (AI + fallback)"""
-    
     period_names = {
         "day": "день",
         "week": "неделю",
@@ -352,30 +420,18 @@ async def generate_ai_affirmation(date_str: str, life_number: int, target_date_s
 
 Верни ТОЛЬКО текст аффирмации. Без кавычек. Без пояснений.
 """
-
+    
     try:
         result = await ask_groq(prompt, "default")
         return result.strip()
     except Exception:
-        # fallback на старую логику
         return NumerologyFeatures.generate_daily_affirmation(date_str)
-        
-# =====================
-# BOT INIT
-# =====================
-
-bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
-router = Router()
-dp.include_router(router)
 
 # =====================
-# BEAUTIFUL KEYBOARDS
+# KEYBOARDS
 # =====================
 
 def main_menu(user_id: int = None):
-    """Создает красивое главное меню"""
-    # Базовые кнопки для всех пользователей
     keyboard = [
         [KeyboardButton(text="✨ Мой нумерологический портрет")],
         [KeyboardButton(text="💞 Совместимость партнеров")],
@@ -384,7 +440,6 @@ def main_menu(user_id: int = None):
         [KeyboardButton(text="🔄 Моя аффирмация дня")]
     ]
     
-    # Добавляем кнопку админа если нужно
     if user_id in ADMIN_IDS:
         keyboard.append([KeyboardButton(text="👑 Админ-панель")])
     
@@ -397,7 +452,6 @@ def main_menu(user_id: int = None):
     )
 
 def admin_menu():
-    """Меню админ-панели"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Статистика")],
@@ -409,7 +463,6 @@ def admin_menu():
     )
 
 def forecast_period_menu():
-    """Меню выбора периода прогноза"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -424,7 +477,6 @@ def forecast_period_menu():
     )
 
 def horoscope_type_menu():
-    """Меню выбора типа гороскопа"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -439,80 +491,6 @@ def horoscope_type_menu():
     )
 
 # =====================
-# FLASK ROUTES (ПОСЛЕ СОЗДАНИЯ APP)
-# =====================
-
-@app.route(ADMIN_PATH)
-def admin_panel():
-    """Веб-админка"""
-    # Простая проверка (в продакшене нужно добавить аутентификацию)
-    return f"""
-    <html>
-    <head>
-        <title>Админ-панель нумеробота</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-            .stats {{ background: #f5f5f5; padding: 20px; border-radius: 10px; }}
-            h1 {{ color: #333; }}
-            .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
-        </style>
-    </head>
-    <body>
-        <h1>🤖 Админ-панель нумеробота</h1>
-        
-        <div class="stats">
-            <h2>📊 Статистика:</h2>
-            <p><strong>Пользователей:</strong> {stats.get('total_users', 0)}</p>
-            <p><strong>Анализов выполнено:</strong> {stats.get('calculations', 0) + stats.get('compatibility_checks', 0) + stats.get('forecasts', 0) + stats.get('horoscopes', 0)}</p>
-            <p><strong>Прогнозов:</strong> {stats.get('forecasts', 0)}</p>
-            <p><strong>Гороскопов:</strong> {stats.get('horoscopes', 0)}</p>
-        </div>
-        
-        <h2>🔧 Действия:</h2>
-        <a href="/" class="btn">🏠 Главная</a>
-        <a href="/ping" class="btn">🔄 Ping</a>
-        <a href="/admin/stats" class="btn">📈 Детальная статистика</a>
-        
-        <h2>📁 Файлы:</h2>
-        <p><a href="/admin/users.json" target="_blank">users.json</a> ({len(users)} пользователей)</p>
-        <p><a href="/admin/stats.json" target="_blank">stats.json</a></p>
-        <p><a href="/admin/personalization.json" target="_blank">personalization.json</a></p>
-    </body>
-    </html>
-    """
-
-@app.route("/admin/stats.json")
-def admin_stats_json():
-    return json.dumps(stats, ensure_ascii=False, indent=2)
-
-@app.route("/admin/users.json")
-def admin_users_json():
-    return json.dumps(users, ensure_ascii=False, indent=2)
-
-@app.route("/admin/personalization.json")
-def admin_personalization_json():
-    return json.dumps(personalization, ensure_ascii=False, indent=2)
-
-@app.route("/")
-def home():
-    return "Bot is running"
-
-@app.route("/ping")
-def ping():
-    return "pong"
-
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
-    data = request.get_json()
-    update = types.Update(**data)
-
-    asyncio.run_coroutine_threadsafe(
-        dp.feed_update(bot, update),
-        loop
-    )
-    return "ok"
-
-# =====================
 # UTILITY FUNCTIONS
 # =====================
 
@@ -524,7 +502,6 @@ def is_date(text: str) -> bool:
         return False
 
 def format_user_name(user: types.User) -> str:
-    """Форматирование имени пользователя"""
     name_parts = []
     if user.first_name:
         name_parts.append(user.first_name)
@@ -532,72 +509,7 @@ def format_user_name(user: types.User) -> str:
         name_parts.append(user.last_name)
     return " ".join(name_parts) if name_parts else "Дорогой друг"
 
-# =====================
-# HANDLERS
-# =====================
-
-@router.message(CommandStart())
-async def start(m: Message):
-    user_id = m.from_user.id
-    username = m.from_user.username or ""
-    first_name = m.from_user.first_name or ""
-    last_name = m.from_user.last_name or ""
-    
-    now = datetime.now()
-    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Проверяем, новый ли пользователь
-    is_new_user = str(user_id) not in users
-    
-    # Обновляем информацию о пользователе
-    if is_new_user:
-        users[str(user_id)] = {
-            "username": username,
-            "first_name": first_name,
-            "last_name": last_name,
-            "joined": now_str,
-            "last_active": now_str,
-            "total_requests": 0
-        }
-        # Обновляем статистику
-        stats["total_users"] = len(users)
-        stats["daily_stats"]["new_users"] += 1
-        
-        # Сохраняем дату регистрации в статистике
-        stats["user_registration_dates"][str(user_id)] = now_str
-    else:
-        # Обновляем время последней активности
-        users[str(user_id)]["last_active"] = now_str
-    
-    # Сохраняем время последней активности в статистике
-    stats["user_last_activity"][str(user_id)] = now_str
-    
-    save_users(users)
-    save_stats(stats)
-    
-    # Персонализированное приветствие
-    user_name = format_user_name(m.from_user)
-    
-    welcome_messages = [
-        f"✨ Приветствую, {user_name}! Я — ваш личный нумеролог.",
-        f"🌟 Добро пожаловать, {user_name}! Готовы раскрыть тайны чисел?",
-        f"🔮 Здравствуйте, {user_name}! Числа расскажут многое о вашем пути.",
-        f"💫 Рад видеть вас, {user_name}! Давайте исследуем мир нумерологии вместе."
-    ]
-    
-    welcome_text = random.choice(welcome_messages) + "\n\n" + \
-                  "Выберите, что вас интересует:"
-    
-    await m.answer(
-        welcome_text,
-        reply_markup=main_menu(user_id)
-    )
-    
-    # Обновляем профиль
-    PersonalizationEngine.update_user_profile(user_id, "start")
-
 def calculate_active_users():
-    """Расчет активных пользователей (активны в последние 30 дней)"""
     now = datetime.now()
     active_count = 0
     inactive_count = 0
@@ -613,11 +525,61 @@ def calculate_active_users():
                 else:
                     inactive_count += 1
             except:
-                active_count += 1  # Если не можем определить, считаем активным
+                active_count += 1
         else:
-            active_count += 1  # Если нет данных, считаем активным
+            active_count += 1
     
     return active_count, inactive_count
+
+# =====================
+# HANDLERS
+# =====================
+
+@router.message(CommandStart())
+async def start(m: Message):
+    user_id = m.from_user.id
+    username = m.from_user.username or ""
+    first_name = m.from_user.first_name or ""
+    last_name = m.from_user.last_name or ""
+    
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    
+    is_new_user = str(user_id) not in users
+    
+    if is_new_user:
+        users[str(user_id)] = {
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "joined": now_str,
+            "last_active": now_str,
+            "total_requests": 0
+        }
+        stats["total_users"] = len(users)
+        stats["daily_stats"]["new_users"] = stats["daily_stats"].get("new_users", 0) + 1
+        stats["user_registration_dates"][str(user_id)] = now_str
+    else:
+        users[str(user_id)]["last_active"] = now_str
+    
+    stats["user_last_activity"][str(user_id)] = now_str
+    
+    save_users(users)
+    save_stats(stats)
+    
+    user_name = format_user_name(m.from_user)
+    
+    welcome_messages = [
+        f"✨ Приветствую, {user_name}! Я — ваш личный нумеролог.",
+        f"🌟 Добро пожаловать, {user_name}! Готовы раскрыть тайны чисел?",
+        f"🔮 Здравствуйте, {user_name}! Числа расскажут многое о вашем пути.",
+        f"💫 Рад видеть вас, {user_name}! Давайте исследуем мир нумерологии вместе."
+    ]
+    
+    welcome_text = random.choice(welcome_messages) + "\n\n" + "Выберите, что вас интересует:"
+    
+    await m.answer(welcome_text, reply_markup=main_menu(user_id))
+    PersonalizationEngine.update_user_profile(user_id, "start")
 
 @router.message(lambda m: m.text == "✨ Мой нумерологический портрет")
 async def numerology_portrait(m: Message):
@@ -674,25 +636,23 @@ async def forecast_main(m: Message):
 @router.callback_query(lambda c: c.data.startswith("forecast_"))
 async def process_forecast_period(callback: types.CallbackQuery):
     period = callback.data.split("_")[1]
-    
-    # Сохраняем период в пользовательских данных
     user_id = callback.from_user.id
+    
     if str(user_id) not in users:
         users[str(user_id)] = {}
     
     users[str(user_id)]["last_forecast_period"] = period
-    save_users(users)  # Не забудьте сохранить!
+    save_users(users)
     
     period_names = {
         "week": "неделю ✨",
         "month": "месяц 📅",
-        "quarter": "3 месяца 📆",  # ДОБАВЬТЕ ЭТУ СТРОЧКУ
+        "quarter": "3 месяца 📆",
         "year": "год 🎯"
     }
     
-    # Добавьте проверку на случай, если period не найден в словаре
     if period not in period_names:
-        period = "month"  # значение по умолчанию
+        period = "month"
     
     await callback.message.edit_text(
         f"📅 *Прогноз на {period_names[period]}*\n\n"
@@ -705,13 +665,9 @@ async def process_forecast_period(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     
-    PersonalizationEngine.update_user_profile(
-        callback.from_user.id, 
-        f"forecast_{period}"
-    )
-    
+    PersonalizationEngine.update_user_profile(callback.from_user.id, f"forecast_{period}")
     await callback.answer()
-    
+
 @router.message(lambda m: m.text == "🌟 Персональный гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
@@ -746,11 +702,7 @@ async def process_horoscope_type(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     
-    PersonalizationEngine.update_user_profile(
-        callback.from_user.id, 
-        f"horoscope_{h_type}"
-    )
-    
+    PersonalizationEngine.update_user_profile(callback.from_user.id, f"horoscope_{h_type}")
     await callback.answer()
 
 @router.message(lambda m: m.text == "🔄 Моя аффирмация дня")
@@ -786,8 +738,6 @@ async def admin_button_handler(m: Message):
             reply_markup=main_menu(user_id)
         )
 
-# Добавьте после admin_button_handler:
-
 @router.message(lambda m: m.text == "📊 Статистика")
 async def admin_stats(m: Message):
     user_id = m.from_user.id
@@ -796,13 +746,11 @@ async def admin_stats(m: Message):
         await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
         return
     
-    # Пересчитываем активных пользователей
     active_users, inactive_users = calculate_active_users()
     stats["active_users"] = active_users
     stats["inactive_users"] = inactive_users
     save_stats(stats)
     
-    # Формируем статистику
     total_calculations = (
         stats.get("calculations", 0) + 
         stats.get("compatibility_checks", 0) + 
@@ -810,11 +758,9 @@ async def admin_stats(m: Message):
         stats.get("horoscopes", 0)
     )
     
-    # Рассчитываем среднее количество запросов на пользователя
     total_users = len(users)
     avg_requests = total_calculations / total_users if total_users > 0 else 0
     
-    # Статистика по датам регистрации
     current_year = datetime.now().year
     users_this_month = 0
     users_this_year = 0
@@ -848,7 +794,6 @@ async def admin_stats(m: Message):
 
 📊 *Средние показатели:*
 • Запросов на пользователя: {avg_requests:.1f}
-• Новых пользователей в день: {stats.get('daily_stats', {}).get('new_users_today', 0)}
 
 📅 *За сегодня ({datetime.now().strftime("%d.%m.%Y")}):*
 • Новых пользователей: {stats.get("daily_stats", {}).get("new_users", 0)}
@@ -856,8 +801,7 @@ async def admin_stats(m: Message):
 
 🎯 *Популярные функции:*
 1. {max(stats.get("popular_features", {}), key=stats.get("popular_features", {}).get, default="Нет данных")} ({stats.get("popular_features", {}).get(max(stats.get("popular_features", {}), key=stats.get("popular_features", {}).get, default=""), 0)} раз)
-2. {sorted(stats.get("popular_features", {}).items(), key=lambda x: x[1], reverse=True)[1][0] if len(stats.get("popular_features", {})) > 1 else "Нет данных"} ({sorted(stats.get("popular_features", {}).items(), key=lambda x: x[1], reverse=True)[1][1] if len(stats.get("popular_features", {})) > 1 else 0} раз)
-    """
+"""
     
     await m.answer(stats_text, parse_mode="Markdown", reply_markup=admin_menu())
 
@@ -875,8 +819,7 @@ async def admin_users(m: Message):
     
     now = datetime.now()
     
-    # Получаем последних 5 пользователей и проверяем активность
-    for uid, user_data in list(users.items())[-10:]:  # Последние 10
+    for uid, user_data in list(users.items())[-10:]:
         username = user_data.get("username", "без username")
         first_name = user_data.get("first_name", "")
         last_name = user_data.get("last_name", "")
@@ -884,7 +827,6 @@ async def admin_users(m: Message):
         joined = user_data.get("joined", "неизвестно")
         last_active = user_data.get("last_active", "никогда")
         
-        # Определяем активность
         try:
             if last_active != "никогда":
                 last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
@@ -899,7 +841,6 @@ async def admin_users(m: Message):
         user_info += f"\n   📅 Регистрация: {joined}"
         user_info += f"\n   ⏱️ Последняя активность: {last_active}"
         
-        # Проверяем неактивность
         try:
             if last_active != "никогда":
                 last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
@@ -923,9 +864,8 @@ async def admin_users(m: Message):
 {chr(10).join(inactive_users_list[:5]) if inactive_users_list else "• Нет неактивных пользователей"}
 
 📁 Файл с пользователями: `users.json`
-💾 Размер файла: {Path("users.json").stat().st_size if Path("users.json").exists() else 0} байт
-💾 Пользователей в файле: {len(users)}
-    """
+💾 Размер файла: {USERS_FILE.stat().st_size if USERS_FILE.exists() else 0} байт
+"""
     
     await m.answer(users_text, parse_mode="Markdown", reply_markup=admin_menu())
 
@@ -957,7 +897,7 @@ async def back_to_main(m: Message):
 async def about_bot(m: Message):
     user_id = m.from_user.id
     
-    about_text = """
+    about_text = f"""
 🌟 *Нумерологический бот с AI*
 
 Я — ваш персональный нумеролог, использующий искусственный интеллект для глубокого анализа.
@@ -973,28 +913,15 @@ async def about_bot(m: Message):
 Я сочетаю древнюю мудрость нумерологии с современными психологическими знаниями. Все анализы уникальны и создаются специально для вас.
 
 📊 *Статистика:*
-• Пользователей: {total_users}
-• Анализов выполнено: {total_analyses}
+• Пользователей: {stats["total_users"]}
+• Анализов выполнено: {stats.get("calculations", 0) + stats.get("compatibility_checks", 0) + stats.get("forecasts", 0)}
 
 💡 *Совет:* Регулярно обращайтесь за анализом — числа могут раскрывать новые грани вашего пути!
 
-🌐 *Веб-админка:* {base_url}{admin_path}
-""".format(
-        total_users=stats["total_users"],
-        total_analyses=stats["calculations"] + stats["compatibility_checks"] + stats["forecasts"],
-        base_url=BASE_URL,
-        admin_path=ADMIN_PATH
-    )
+🌐 *Веб-админка:* {BASE_URL}{ADMIN_PATH}
+"""
     
     await m.answer(about_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
-
-@router.message(lambda m: m.text == "🔙 В главное меню")
-async def back_to_main(m: Message):
-    user_id = m.from_user.id
-    await m.answer(
-        "Возвращаемся в главное меню:",
-        reply_markup=main_menu(user_id)
-    )
 
 # =====================
 # MAIN ANALYZERS
@@ -1002,75 +929,48 @@ async def back_to_main(m: Message):
 
 @router.message(lambda m: is_date(m.text))
 async def date_analysis_handler(m: Message):
-    """Универсальный обработчик дат с маршрутизацией"""
     user_id = m.from_user.id
     date_str = m.text
     
-    print(f"=== ОБРАБОТКА ДАТЫ ===")
-    print(f"Пользователь: {user_id}")
-    print(f"Введенная дата: {date_str}")
-    
-    # Получаем историю действий пользователя
     user_history = personalization["user_history"].get(str(user_id), {"actions": []})
     
-    print(f"История действий: {user_history.get('actions', [])}")
-    
     if not user_history["actions"]:
-        print("Нет истории действий → портрет")
         await process_portrait(m, date_str)
         return
     
-    # Получаем последнее действие
     last_action = user_history["actions"][-1]["action"]
-    print(f"Последнее действие: {last_action}")
     
-    # Маршрутизация по последнему действию
     if "forecast" in last_action:
-        print("Маршрутизация → прогноз")
         await forecast_handler(m, date_str, last_action)
     elif "horoscope" in last_action:
-        print("Маршрутизация → гороскоп")
         await horoscope_handler(m, date_str, last_action)
     elif last_action == "affirmation_request":
-        print("Маршрутизация → аффирмация")
         await affirmation_handler(m, date_str)
     elif last_action == "portrait_request":
-        print("Маршрутизация → портрет")
         await process_portrait(m, date_str)
     else:
-        print("Маршрутизация → портрет (по умолчанию)")
         await process_portrait(m, date_str)
 
 async def process_portrait(m: Message, date_str: str):
-    """Обработка нумерологического портрета"""
     user_id = m.from_user.id
     
     await m.answer("✨ Анализирую ваш нумерологический портрет...")
     
-    # Обновляем статистику
-    if "calculations" in stats:
-        stats["calculations"] += 1
-    if "popular_features" in stats:
-        stats["popular_features"]["portrait"] = stats["popular_features"].get("portrait", 0) + 1
-    if "daily_stats" in stats:
-        stats["daily_stats"]["calculations"] = stats["daily_stats"].get("calculations", 0) + 1
+    stats["calculations"] = stats.get("calculations", 0) + 1
+    stats["popular_features"]["portrait"] = stats["popular_features"].get("portrait", 0) + 1
+    stats["daily_stats"]["calculations"] = stats["daily_stats"].get("calculations", 0) + 1
     
-    # Обновляем активность пользователя
     user_id_str = str(user_id)
     if user_id_str in users:
         users[user_id_str]["last_active"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         users[user_id_str]["total_requests"] = users[user_id_str].get("total_requests", 0) + 1
         save_users(users)
     
-    # Обновляем общую статистику активности
     stats["user_last_activity"][user_id_str] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     save_stats(stats)
     
-    # Получаем число жизненного пути
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
     
-    # Создаем промпт для AI
     prompt = f"""
 Ты — профессиональный нумеролог и психолог-консультант премиум-уровня.
 
@@ -1120,13 +1020,9 @@ async def process_portrait(m: Message, date_str: str):
 - астрология
 """
     
-    # Получаем анализ от AI
     analysis = await ask_groq(prompt, "detailed")
-    
-    # Персонализируем ответ
     personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
     
-    # Добавляем аффирмацию в конце
     affirmation = await generate_ai_affirmation(
         date_str,
         life_number,
@@ -1147,24 +1043,20 @@ async def process_portrait(m: Message, date_str: str):
 """
     
     await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    # Обновляем профиль пользователя
     PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
 
 async def forecast_handler(m: Message, date_str: str, last_action: str):
-    """Обработчик для прогнозов"""
     user_id = m.from_user.id
     
-    # Извлекаем период из последнего действия (например: "forecast_month")
     if "_" in last_action:
         period = last_action.split("_")[1]
     else:
-        period = "month"  # По умолчанию месяц
+        period = "month"
     
     period_names = {
         "week": "неделю",
         "month": "месяц",
-        "quarter": "3 месяца",  # ДОБАВЬТЕ ЭТУ СТРОЧКУ
+        "quarter": "3 месяца",
         "year": "год"
     }
     
@@ -1172,18 +1064,12 @@ async def forecast_handler(m: Message, date_str: str, last_action: str):
     
     await m.answer(f"📅 Анализирую ваш прогноз на {period_display}...")
     
-    # Обновляем статистику
-    if "forecasts" in stats:
-        stats["forecasts"] += 1
+    stats["forecasts"] = stats.get("forecasts", 0) + 1
     save_stats(stats)
     
-    # Получаем число жизненного пути
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    
-    # Текущая дата для контекста
     current_date = datetime.now().strftime("%d.%m.%Y")
     
-    # Создаем промпт для прогноза
     prompt = f"""
 Ты — профессиональный нумеролог-консультант премиум-уровня.
 
@@ -1237,10 +1123,8 @@ async def forecast_handler(m: Message, date_str: str, last_action: str):
 - философские рассуждения
 """
     
-    # Получаем прогноз от AI
     forecast = await ask_groq(prompt, "forecast")
     
-    # Формируем финальный ответ
     final_response = f"""
 📅 *Ваш нумерологический прогноз* 📅
 *Период: {period_display.capitalize()}*
@@ -1252,17 +1136,10 @@ async def forecast_handler(m: Message, date_str: str, last_action: str):
 """
     
     await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    # Обновляем профиль пользователя
-    PersonalizationEngine.update_user_profile(
-        user_id, 
-        f"forecast_generated_{period}",
-        {"date": date_str, "period": period}
-    )
+    PersonalizationEngine.update_user_profile(user_id, f"forecast_generated_{period}", {"date": date_str, "period": period})
 
 @router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
 async def compatibility_analysis_handler(m: Message):
-    """Обработчик для анализа совместимости"""
     user_id = m.from_user.id
     date1, date2 = m.text.split()
     
@@ -1272,14 +1149,9 @@ async def compatibility_analysis_handler(m: Message):
     
     await m.answer("💞 Анализирую совместимость...")
     
-    # Обновляем статистику
-    if "compatibility_checks" in stats:
-        stats["compatibility_checks"] += 1
+    stats["compatibility_checks"] = stats.get("compatibility_checks", 0) + 1
     save_stats(stats)
     
-    # Определяем тип совместимости для внутренней логики (можно оставить)
-
-# Создаем промпт для общего анализа
     prompt = f"""
 Ты — профессиональный консультант по отношениям и нумерологии премиум-уровня.
 
@@ -1327,11 +1199,8 @@ async def compatibility_analysis_handler(m: Message):
 - философские рассуждения
 - слова «карма», «вселенная», «потоки»
 """
-
-# Получаем анализ
-    analysis = await ask_groq(prompt, "compatibility")
     
-    # Персонализируем
+    analysis = await ask_groq(prompt, "compatibility")
     personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "compatibility")
     
     final_response = f"""
@@ -1348,14 +1217,11 @@ async def compatibility_analysis_handler(m: Message):
 • {NumerologyFeatures.calculate_life_path_number(date2) or '?'}
 """
     await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
     PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
-    
+
 async def horoscope_handler(m: Message, date_str: str, last_action: str):
-    """Обработчик для гороскопов"""
     user_id = m.from_user.id
     
-    # Извлекаем тип гороскопа из последнего действия
     if "_" in last_action:
         h_type = last_action.split("_")[1]
     else:
@@ -1369,9 +1235,8 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     }
     
     period_display = type_names.get(h_type, "сегодня")
-    
-    # Рассчитываем дату в зависимости от типа гороскопа
     today = datetime.now()
+    
     if h_type == "today":
         target_date = today
         date_description = f"{today.strftime('%d.%m.%Y')} (сегодня)"
@@ -1383,47 +1248,32 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         target_date_end = today + timedelta(days=6)
         date_description = f"с {target_date_start.strftime('%d.%m.%Y')} по {target_date_end.strftime('%d.%m.%Y')} (на неделю)"
     elif h_type == "month":
-        # Текущий месяц
         year = today.year
         month = today.month
-        # Первый день месяца
         target_date_start = datetime(year, month, 1)
-        # Последний день месяца
         if month == 12:
             target_date_end = datetime(year + 1, 1, 1) - timedelta(days=1)
         else:
             target_date_end = datetime(year, month + 1, 1) - timedelta(days=1)
         date_description = f"с {target_date_start.strftime('%d.%m.%Y')} по {target_date_end.strftime('%d.%m.%Y')} (на месяц)"
-        # Для аффирмации используем сегодняшнюю дату
-        target_date_for_affirmation = today
     else:
         target_date = today
         date_description = f"{today.strftime('%d.%m.%Y')} (сегодня)"
-        target_date_for_affirmation = today
     
     await m.answer(f"🌟 Создаю гороскоп на {period_display}...")
     
-    # Обновляем статистику
-    if "horoscopes" in stats:
-        stats["horoscopes"] += 1
+    stats["horoscopes"] = stats.get("horoscopes", 0) + 1
     save_stats(stats)
     
-    # Получаем число жизненного пути
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    
-    # Формируем заголовок с датой
     period_header = f"{period_display.capitalize()} ({date_description})"
     
-    # Создаем промпт для гороскопа
     if h_type in ["today", "tomorrow"]:
-        # Промпт для одного дня
         prompt = f"""
 Ты — профессиональный нумеролог-консультант премиум-уровня.
 
-
 Создай персональный нумерологический гороскоп на {period_header} для человека, родившегося {date_str}.
 Число жизненного пути: {life_number if life_number else 'не определено'}.
-
 
 Требования к стилю:
 - чистый литературный русский
@@ -1434,41 +1284,31 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 - обращение на «вы»
 - не упоминай расчёты и формулы
 
-
 Структура ответа (строго соблюдать):
-
 
 1. КРАТКОЕ ВСТУПЛЕНИЕ
 1–2 предложения с упоминанием даты и смысла дня именно для человека с этим числом жизненного пути.
 
-
 2. ЭНЕРГИЯ ДНЯ
 Один абзац: эмоциональный фон, уровень концентрации, внутренний ритм дня.
-
 
 3. КЛЮЧЕВЫЕ СФЕРЫ:
 • Работа и финансы — конкретные тенденции и что лучше делать
 • Отношения и общение — стиль взаимодействия, возможные реакции людей
 • Внутреннее состояние — энергия, усталость, мотивация
 
-
 4. ВОЗМОЖНЫЕ ВЫЗОВЫ ДНЯ
 1 абзац: реальные риски поведения или решений.
-
 
 5. СОВЕТ ОТ ЧИСЕЛ
 Одна практическая рекомендация, применимая в жизни.
 
-
 6. ЧИСЛО УДАЧИ ДНЯ
 Число + краткое объяснение, как его использовать.
 
-
 7. ИТОГ ОДНИМ ПРЕДЛОЖЕНИЕМ.
 
-
 Объём: 150–200 слов.
-
 
 Запрещено:
 - английские слова
@@ -1476,11 +1316,9 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 - слова «период», «энергии недели/месяца»
 - абстрактная философия
 
-
 Говори только про этот конкретный день.
 """
     elif h_type == "week":
-        # Промпт для недели
         prompt = f"""
 Ты - профессиональный психолог и нумеролог-консультант премиум-уровня.
 
@@ -1525,7 +1363,6 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 - повторять одно и то же разными словами
 """
     elif h_type == "month":
-        # Промпт для месяца
         prompt = f"""
 Ты — профессиональный нумеролог-консультант премиум-уровня.
 
@@ -1575,10 +1412,9 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 - «вселенная», «потоки», «карма»
 - философские рассуждения
 """
-    # Получаем гороскоп
+    
     horoscope = await ask_groq(prompt, "horoscope")
     
-    # Определяем заголовок для аффирмации в зависимости от типа гороскопа
     if h_type in ["today", "tomorrow"]:
         affirmation_title = "Аффирмация дня"
     elif h_type == "week":
@@ -1586,7 +1422,6 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     elif h_type == "month":
         affirmation_title = "Аффирмация месяца"
     
-    # Генерируем аффирмацию
     affirmation = await generate_ai_affirmation(
         date_str,
         life_number,
@@ -1608,25 +1443,13 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 """
     
     await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
-    # Обновляем профиль пользователя
-    PersonalizationEngine.update_user_profile(
-        user_id, 
-        f"horoscope_generated_{h_type}",
-        {"date": date_str, "period": h_type, "target_date": target_date.strftime("%Y-%m-%d") if h_type in ["today", "tomorrow"] else date_description}
-    )
+    PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{h_type}", {"date": date_str, "period": h_type})
 
 async def affirmation_handler(m: Message, date_str: str):
-    """Обработчик для аффирмаций"""
     user_id = m.from_user.id
-    
-    # Получаем число жизненного пути
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    
-    # Используем текущую дату для аффирмации
     today = datetime.now()
     
-    # Генерируем аффирмацию
     affirmation = await generate_ai_affirmation(
         date_str,
         life_number,
@@ -1634,7 +1457,6 @@ async def affirmation_handler(m: Message, date_str: str):
         period="day"
     )
     
-    # Создаем красивый ответ
     affirmation_text = f"""
 🔄 *Ваша персональная аффирмация* 🔄
 
@@ -1656,11 +1478,157 @@ async def affirmation_handler(m: Message, date_str: str):
 """
     
     await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
-    
     PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
 
-@app.route("/admin/full_report")
-def admin_full_report():
+# =====================
+# FASTAPI ROUTES
+# =====================
+
+def verify_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Проверка администратора"""
+    # В продакшене добавьте реальную проверку токена
+    return True
+
+@app.post(WEBHOOK_PATH)
+async def telegram_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """Эндпоинт для получения обновлений от Telegram"""
+    
+    # Проверка secret_token для безопасности
+    if WEBHOOK_SECRET:
+        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if secret != WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    
+    # Получаем данные
+    update_data = await request.json()
+    
+    # Обработка в фоне для быстрого ответа Telegram
+    background_tasks.add_task(process_telegram_update, update_data)
+    
+    return {"status": "ok"}
+
+async def process_telegram_update(update_data: dict):
+    """Обработка обновления Telegram"""
+    try:
+        update = Update(**update_data)
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+
+@app.get("/")
+async def home():
+    return {"status": "running", "service": "Numerology Bot API"}
+
+@app.get("/ping")
+async def ping():
+    return {"status": "pong", "timestamp": datetime.now().isoformat()}
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "users": len(users),
+        "bot": await bot.get_me() if BOT_TOKEN else "not_configured"
+    }
+
+@app.get(ADMIN_PATH, response_class=HTMLResponse)
+async def admin_panel():
+    """Веб-админка"""
+    active_users, inactive_users = calculate_active_users()
+    total_analyses = (
+        stats.get("calculations", 0) + 
+        stats.get("compatibility_checks", 0) + 
+        stats.get("forecasts", 0) + 
+        stats.get("horoscopes", 0)
+    )
+    
+    return f"""
+    <html>
+    <head>
+        <title>Админ-панель нумеробота (FastAPI)</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
+            .container {{ max-width: 1200px; margin: 0 auto; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }}
+            .stats {{ background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+            h1 {{ margin: 0; }}
+            h2 {{ color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }}
+            .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }}
+            .card {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+            .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; transition: background 0.3s; }}
+            .btn:hover {{ background: #45a049; }}
+            .api-btn {{ background: #667eea; }}
+            .api-btn:hover {{ background: #5a67d8; }}
+            .file-link {{ color: #667eea; text-decoration: none; }}
+            .file-link:hover {{ text-decoration: underline; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🤖 Админ-панель нумеробота (FastAPI)</h1>
+                <p>Версия 2.0 | {datetime.now().strftime("%d.%m.%Y %H:%M")}</p>
+            </div>
+            
+            <div class="stats">
+                <h2>📊 Основная статистика:</h2>
+                <div class="grid">
+                    <div class="card">
+                        <h3>👥 Пользователи</h3>
+                        <p><strong>Всего:</strong> {stats.get('total_users', 0)}</p>
+                        <p><strong>Активных:</strong> {active_users}</p>
+                        <p><strong>Неактивных:</strong> {inactive_users}</p>
+                    </div>
+                    <div class="card">
+                        <h3>📈 Анализы</h3>
+                        <p><strong>Всего анализов:</strong> {total_analyses}</p>
+                        <p><strong>Портретов:</strong> {stats.get('calculations', 0)}</p>
+                        <p><strong>Совместимостей:</strong> {stats.get('compatibility_checks', 0)}</p>
+                        <p><strong>Прогнозов:</strong> {stats.get('forecasts', 0)}</p>
+                        <p><strong>Гороскопов:</strong> {stats.get('horoscopes', 0)}</p>
+                    </div>
+                    <div class="card">
+                        <h3>📅 Сегодня</h3>
+                        <p><strong>Новых пользователей:</strong> {stats.get('daily_stats', {}).get('new_users', 0)}</p>
+                        <p><strong>Анализов выполнено:</strong> {stats.get('daily_stats', {}).get('calculations', 0)}</p>
+                        <p><strong>Дата:</strong> {datetime.now().strftime("%d.%m.%Y")}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="stats">
+                <h2>🔧 Действия:</h2>
+                <a href="/" class="btn">🏠 Главная</a>
+                <a href="/ping" class="btn">🔄 Ping</a>
+                <a href="/health" class="btn">❤️ Health Check</a>
+                <a href="/api/stats" class="btn api-btn">📈 API Статистика</a>
+                <a href="/admin/full_report" class="btn api-btn">📋 Полный отчет</a>
+                <a href="/api/docs" class="btn api-btn" target="_blank">📚 API Документация</a>
+            </div>
+            
+            <div class="stats">
+                <h2>📁 Файлы данных:</h2>
+                <p><a href="/api/admin/users" class="file-link" target="_blank">users.json</a> ({len(users)} пользователей)</p>
+                <p><a href="/api/admin/stats" class="file-link" target="_blank">stats.json</a></p>
+                <p><a href="/api/admin/personalization" class="file-link" target="_blank">personalization.json</a></p>
+            </div>
+            
+            <div class="stats">
+                <h2>🔗 Ссылки:</h2>
+                <p><strong>Webhook URL:</strong> {BASE_URL}{WEBHOOK_PATH}</p>
+                <p><strong>Админ ID:</strong> {ADMIN_IDS[0] if ADMIN_IDS else 'Не задан'}</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+@app.get("/admin/full_report")
+async def admin_full_report():
     """Полный отчет по пользователям"""
     report = []
     now = datetime.now()
@@ -1682,7 +1650,6 @@ def admin_full_report():
         last_active = user_data.get("last_active", "никогда")
         total_requests = user_data.get("total_requests", 0)
         
-        # Определяем активность
         status = "НЕТ ДАННЫХ"
         try:
             if last_active != "никогда":
@@ -1713,69 +1680,75 @@ def admin_full_report():
     report.append("=" * 50)
     report.append(f"ИТОГО: Активных: {active_count} | Неактивных: {inactive_count}")
     
-    return "<pre>" + "\n".join(report) + "</pre>"
+    return HTMLResponse(content="<pre>" + "\n".join(report) + "</pre>")
 
 # =====================
-# EVENT LOOP
+# API ENDPOINTS
 # =====================
 
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
+@app.get("/api/stats")
+async def get_stats_api():
+    """API для получения статистики"""
+    active_users, inactive_users = calculate_active_users()
+    stats["active_users"] = active_users
+    stats["inactive_users"] = inactive_users
+    save_stats(stats)
+    
+    return stats
+
+@app.get("/api/admin/users")
+async def get_users_api():
+    """API для получения пользователей"""
+    return users
+
+@app.get("/api/admin/stats")
+async def get_stats_raw_api():
+    """API для получения сырой статистики"""
+    return stats
+
+@app.get("/api/admin/personalization")
+async def get_personalization_api():
+    """API для получения данных персонализации"""
+    return personalization
 
 # =====================
-# WEBHOOK SETUP
+# MAIN ENTRY POINT
 # =====================
-
-def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-    requests.post(url, json={"url": WEBHOOK_URL})
-    print("Webhook set:", WEBHOOK_URL)
-
-# =====================
-# START
-# =====================
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    print("Starting bot...")
+    import uvicorn
     
-    # Проверка наличия необходимых переменных окружения
+    # Проверка переменных окружения
     if not BOT_TOKEN:
-        print("ERROR: BOT_TOKEN is not set!")
+        logger.error("ERROR: BOT_TOKEN is not set!")
         exit(1)
     if not GROQ_API_KEY:
-        print("ERROR: GROQ_API_KEY is not set!")
+        logger.error("ERROR: GROQ_API_KEY is not set!")
         exit(1)
     if not BASE_URL:
-        print("ERROR: BASE_URL is not set!")
-        exit(1)
+        logger.warning("WARNING: BASE_URL is not set! Webhook may not work properly.")
     
-    # Создаем необходимые файлы, если их нет
-    if not USERS_FILE.exists():
-        save_users({})
-    if not STATS_FILE.exists():
-        save_stats(load_stats())
-    if not PERSONALIZATION_FILE.exists():
-        save_personalization(load_personalization())
+    # Запуск сервера
+    port = int(os.environ.get("PORT", 8000))
     
-    set_webhook()
-
-    Thread(target=run_flask, daemon=True).start()
-
-    print("✨ Нумерологический бот запущен!")
-    print(f"🌐 Админ-панель: {BASE_URL}{ADMIN_PATH}")
-    print(f"👑 Админ ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Не задан'}")
-    print("\n" + "="*50)
-    print("🎯 Уникальные фичи включены:")
-    print("• Нумерологический портрет с AI")
-    print("• Совместимость по типам отношений")
-    print("• Прогнозы на разные периоды")
-    print("• Персональные гороскопы")
-    print("• Аффирмации дня")
-    print("• Система персонализации")
-    print("="*50)
+    logger.info("✨ Нумерологический бот запущен!")
+    logger.info(f"🌐 API Documentation: {BASE_URL}/api/docs")
+    logger.info(f"🔧 Admin panel: {BASE_URL}{ADMIN_PATH}")
+    logger.info(f"👑 Admin ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Не задан'}")
+    logger.info(f"🚀 Server running on port: {port}")
+    logger.info("="*50)
+    logger.info("🎯 Уникальные фичи включены:")
+    logger.info("• Нумерологический портрет с AI")
+    logger.info("• Совместимость по типам отношений")
+    logger.info("• Прогнозы на разные периоды")
+    logger.info("• Персональные гороскопы")
+    logger.info("• Аффирмации дня")
+    logger.info("• Система персонализации")
+    logger.info("="*50)
     
-    loop.run_forever()
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=True  # Для продакшена установите False
+    )
