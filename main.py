@@ -11,13 +11,14 @@ from collections import defaultdict
 import random
 import time
 from functools import wraps
+from contextlib import asynccontextmanager
+import contextlib
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -54,6 +55,7 @@ MODEL_NAME = "llama-3.1-8b-instant"
 WEBHOOK_PATH = "/webhook"
 ADMIN_PATH = "/admin"
 PORT = int(os.getenv("PORT", 8000))
+USE_POLLING = os.getenv("USE_POLLING", "false").lower() == "true"
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -180,8 +182,19 @@ storage = Storage()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
+    # Запуск
     logger.info("Starting Numerology Bot...")
-    if BOT_TOKEN and BASE_URL:
+    # Установка вебхука или polling
+    if not BOT_TOKEN:
+        logger.error("ERROR: BOT_TOKEN is not set!")
+    elif USE_POLLING:
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
+            logger.info("Polling started (USE_POLLING=true).")
+        except Exception as e:
+            logger.error(f"Ошибка запуска polling: {e}")
+    elif BASE_URL:
         webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
         try:
             await bot.set_webhook(
@@ -196,8 +209,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Завершение
     logger.info("Shutting down Numerology Bot...")
     try:
+        polling_task = getattr(app.state, "polling_task", None)
+        if polling_task:
+            polling_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await polling_task
         await bot.delete_webhook()
         await bot.session.close()
     except Exception as e:
@@ -216,6 +235,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1449,7 +1469,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 Объём: 300–350 слов.
 
-Запещено:
+Запрещено:
 - эзотерические клише
 - «вселенная», «потоки», «карма»
 - философские рассуждения
@@ -1539,6 +1559,7 @@ async def telegram_webhook(
 ):
     """Эндпоинт для получения обновлений от Telegram"""
 
+    # Проверка secret_token для безопасности
     if WEBHOOK_SECRET:
         secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
         if secret != WEBHOOK_SECRET:
@@ -1634,7 +1655,7 @@ async def admin_panel(request: Request, _: bool = Depends(verify_admin)):
                     <div class="card">
                         <h3>📅 Сегодня</h3>
                         <p><strong>Новых пользователей:</strong> {storage.stats.get('daily_stats', {}).get('new_users', 0)}</p>
-                        <p><strong>Анализов выполнено:</strong> {storage.stats.get('daily_stats', {}).get('calculations', 0)}</p>
+                        <p><strong>Анализов вполнено:</strong> {storage.stats.get('daily_stats', {}).get('calculations', 0)}</p>
                         <p><strong>Дата:</strong> {datetime.now().strftime("%d.%m.%Y")}</p>
                     </div>
                 </div>
