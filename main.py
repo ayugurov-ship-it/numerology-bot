@@ -51,7 +51,7 @@ BASE_URL = os.getenv("BASE_URL", "https://your-domain.com")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "260219938").split(",")))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "your-admin-token")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your-secret-token")
-MODEL_NAME = "llama-3.1-8b-instant"
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 WEBHOOK_PATH = "/webhook"
 ADMIN_PATH = "/admin"
 PORT = int(os.getenv("PORT", 8000))
@@ -594,6 +594,25 @@ def calculate_active_users():
     return active_count, inactive_count
 
 # =====================
+# SAFE REPLY HELPER
+# =====================
+
+async def safe_reply(message: Message, text: str, reply_markup=None):
+    """Отправка с Markdown, fallback на plain text при ошибке"""
+    try:
+        await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+    except Exception:
+        try:
+            clean_text = text.replace('*', '').replace('_', '').replace('`', '')
+            await message.answer(clean_text, reply_markup=reply_markup)
+        except Exception as e:
+            logger.error("Failed to send message: %s", e)
+            await message.answer(
+                "Произошла ошибка при отправке результата. Попробуйте ещё раз.",
+                reply_markup=reply_markup
+            )
+
+# =====================
 # HANDLERS
 # =====================
 
@@ -1102,7 +1121,7 @@ async def process_portrait(m: Message, date_str: str):
 📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
 """
 
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
 
 async def forecast_handler(m: Message, date_str: str, last_action: str):
@@ -1195,10 +1214,10 @@ async def forecast_handler(m: Message, date_str: str, last_action: str):
 🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
 """
 
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, f"forecast_generated_{period}", {"date": date_str, "period": period})
 
-@router.message(lambda m: len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
+@router.message(lambda m: m.text and len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
 async def compatibility_analysis_handler(m: Message):
     user_id = m.from_user.id
     date1, date2 = m.text.split()
@@ -1278,7 +1297,7 @@ async def compatibility_analysis_handler(m: Message):
 • {NumerologyFeatures.calculate_life_path_number(date1) or '?'}
 • {NumerologyFeatures.calculate_life_path_number(date2) or '?'}
 """
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
 
 async def horoscope_handler(m: Message, date_str: str, last_action: str):
@@ -1504,7 +1523,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 📅 *Дата создания гороскопа:* {today.strftime("%d.%m.%Y %H:%M")}
 """
 
-    await m.answer(final_response, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{h_type}", {"date": date_str, "period": h_type})
 
 async def affirmation_handler(m: Message, date_str: str):
@@ -1539,7 +1558,7 @@ async def affirmation_handler(m: Message, date_str: str):
 🌟 *Число дня:* {random.randint(1, 9)} (символизирует энергию сегодняшнего дня)
 """
 
-    await m.answer(affirmation_text, parse_mode="Markdown", reply_markup=main_menu(user_id))
+    await safe_reply(m, affirmation_text, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
 
 # =====================
