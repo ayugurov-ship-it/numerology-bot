@@ -52,6 +52,7 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "260219938").split(",")))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "your-admin-token")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your-secret-token")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))  # секунд, по умолчанию 10 мин
 WEBHOOK_PATH = "/webhook"
 ADMIN_PATH = "/admin"
 PORT = int(os.getenv("PORT", 8000))
@@ -179,11 +180,31 @@ storage = Storage()
 # FASTAPI APP WITH LIFESPAN
 # =====================
 
+async def keep_alive():
+    """Пингуем сами себя, чтобы Render Free не усыплял сервис"""
+    if not BASE_URL or BASE_URL == "https://your-domain.com":
+        logger.warning("KEEP-ALIVE: BASE_URL не задан, self-ping отключён")
+        return
+    url = f"{BASE_URL}/ping"
+    logger.info("KEEP-ALIVE: запущен, интервал %s сек, url=%s", KEEP_ALIVE_INTERVAL, url)
+    while True:
+        await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                async with session.get(url) as resp:
+                    logger.debug("KEEP-ALIVE: ping %s → %s", url, resp.status)
+        except Exception as e:
+            logger.warning("KEEP-ALIVE: ошибка ping: %s", e)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
     # Запуск
     logger.info("Starting Numerology Bot...")
+
+    # Keep-alive для Render Free
+    app.state.keep_alive_task = asyncio.create_task(keep_alive())
+
     # Установка вебхука или polling
     if not BOT_TOKEN:
         logger.error("ERROR: BOT_TOKEN is not set!")
@@ -212,6 +233,11 @@ async def lifespan(app: FastAPI):
     # Завершение
     logger.info("Shutting down Numerology Bot...")
     try:
+        keep_alive_task = getattr(app.state, "keep_alive_task", None)
+        if keep_alive_task:
+            keep_alive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await keep_alive_task
         polling_task = getattr(app.state, "polling_task", None)
         if polling_task:
             polling_task.cancel()
