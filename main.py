@@ -1623,15 +1623,15 @@ async def process_telegram_update(update_data: dict):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def home():
     return {"status": "running", "service": "Numerology Bot API"}
 
-@app.get("/ping")
+@app.api_route("/ping", methods=["GET", "HEAD"])
 async def ping():
     return {"status": "pong", "timestamp": datetime.now().isoformat()}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     return {
         "status": "healthy",
@@ -1854,8 +1854,8 @@ if __name__ == "__main__":
     logger.info("="*50)
 
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=PORT,
-        reload=False  # Для продакшена установите False
+        reload=False,
     )
