@@ -246,7 +246,10 @@ async def lifespan(app: FastAPI):
             polling_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await polling_task
-        await bot.delete_webhook()
+        # Удаляем вебхук ТОЛЬКО в режиме polling
+        # В webhook-режиме НЕ удаляем, чтобы Telegram продолжал доставлять обновления
+        if USE_POLLING:
+            await bot.delete_webhook()
         await bot.session.close()
     except Exception as e:
         logger.error(f"Ошибка при завершении: {e}")
