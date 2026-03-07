@@ -218,12 +218,15 @@ async def lifespan(app: FastAPI):
     elif BASE_URL:
         webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
         try:
-            await bot.set_webhook(
+            wh_kwargs = dict(
                 url=webhook_url,
-                secret_token=WEBHOOK_SECRET,
-                drop_pending_updates=True,
-                max_connections=40
+                drop_pending_updates=False,
+                max_connections=40,
             )
+            # Передаём secret_token только если задан явно
+            if WEBHOOK_SECRET and WEBHOOK_SECRET != "your-secret-token":
+                wh_kwargs["secret_token"] = WEBHOOK_SECRET
+            await bot.set_webhook(**wh_kwargs)
             logger.info(f"Webhook установлен: {webhook_url}")
         except Exception as e:
             logger.error(f"Ошибка установки вебхука: {e}")
@@ -1603,14 +1606,17 @@ async def telegram_webhook(
     background_tasks: BackgroundTasks
 ):
     """Эндпоинт для получения обновлений от Telegram"""
+    logger.info(">>> WEBHOOK HIT from %s", request.client.host if request.client else "unknown")
 
     # Проверка secret_token для безопасности
-    if WEBHOOK_SECRET:
+    if WEBHOOK_SECRET and WEBHOOK_SECRET != "your-secret-token":
         secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
         if secret != WEBHOOK_SECRET:
+            logger.warning("Webhook secret mismatch!")
             raise HTTPException(status_code=403, detail="Forbidden")
 
     update_data = await request.json()
+    logger.info(">>> WEBHOOK update_id=%s", update_data.get("update_id", "?"))
     background_tasks.add_task(process_telegram_update, update_data)
 
     return {"status": "ok"}
@@ -1639,6 +1645,23 @@ async def health():
         "users": len(storage.users),
         "bot": await bot.get_me() if BOT_TOKEN else "not_configured"
     }
+
+@app.get("/debug/webhook")
+async def debug_webhook():
+    """Диагностика: проверить статус вебхука в Telegram"""
+    try:
+        info = await bot.get_webhook_info()
+        return {
+            "url": info.url,
+            "has_custom_certificate": info.has_custom_certificate,
+            "pending_update_count": info.pending_update_count,
+            "last_error_date": str(info.last_error_date) if info.last_error_date else None,
+            "last_error_message": info.last_error_message,
+            "max_connections": info.max_connections,
+            "allowed_updates": info.allowed_updates,
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get(ADMIN_PATH, response_class=HTMLResponse)
 @limiter.limit("10/minute")
