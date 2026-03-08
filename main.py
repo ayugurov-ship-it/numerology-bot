@@ -1227,20 +1227,10 @@ async def process_numerology(m: Message, date_str: str):
     analysis = await ask_groq(prompt, "detailed")
     personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "numerology")
 
-    affirmation = await generate_ai_affirmation(
-        date_str,
-        life_number,
-        datetime.now().strftime("%d.%m.%Y"),
-        period="day"
-    )
-
     final_response = f"""
 🔢 *Ваш нумерологический портрет* 🔢
 
 {personalized_analysis}
-
-🔄 *Аффирмация дня:*
-{affirmation}
 
 *{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
 📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
@@ -1544,29 +1534,12 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
     horoscope = await ask_groq(prompt, "horoscope")
 
-    if h_type in ["today", "tomorrow"]:
-        affirmation_title = "Аффирмация дня"
-    elif h_type == "week":
-        affirmation_title = "Аффирмация недели"
-    elif h_type == "month":
-        affirmation_title = "Аффирмация месяца"
-
-    affirmation = await generate_ai_affirmation(
-        date_str,
-        life_number,
-        today.strftime("%d.%m.%Y"),
-        period=h_type if h_type in ["week", "month"] else "day"
-    )
-
     final_response = f"""
 ♈ *Ваш персональный гороскоп* ♈
 *{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
 *На {period_header}*
 
 {horoscope}
-
-🔄 *{affirmation_title}:*
-{affirmation}
 
 📅 *Дата создания гороскопа:* {today.strftime("%d.%m.%Y %H:%M")}
 """
