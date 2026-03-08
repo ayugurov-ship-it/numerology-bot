@@ -205,47 +205,50 @@ async def lifespan(app: FastAPI):
     # Keep-alive для Render Free
     app.state.keep_alive_task = asyncio.create_task(keep_alive())
 
-    # Установка вебхука или polling
-    if not BOT_TOKEN:
-        logger.error("ERROR: BOT_TOKEN is not set!")
-    elif USE_POLLING:
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
-            logger.info("Polling started (USE_POLLING=true).")
-        except Exception as e:
-            logger.error(f"Ошибка запуска polling: {e}")
-    elif BASE_URL:
-        webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
-        try:
-            wh_kwargs = dict(
-                url=webhook_url,
-                drop_pending_updates=False,
-                max_connections=40,
-            )
-            # Передаём secret_token только если задан явно
-            if WEBHOOK_SECRET and WEBHOOK_SECRET != "your-secret-token":
-                wh_kwargs["secret_token"] = WEBHOOK_SECRET
-            await bot.set_webhook(**wh_kwargs)
-            logger.info(f"Webhook установлен: {webhook_url}")
-        except Exception as e:
-            logger.error(f"Ошибка установки вебхука: {e}")
+    # Отложенная установка вебхука / polling (в фоне, чтобы не блокировать открытие порта)
+    async def _delayed_setup():
+        """Запуск бота после того, как сервер уже слушает порт."""
+        await asyncio.sleep(1)  # Даём uvicorn 1 с на bind порта
+        if not BOT_TOKEN:
+            logger.error("ERROR: BOT_TOKEN is not set!")
+            return
+        if USE_POLLING:
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+                app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
+                logger.info("Polling started (USE_POLLING=true).")
+            except Exception as e:
+                logger.error(f"Ошибка запуска polling: {e}")
+        elif BASE_URL:
+            webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
+            try:
+                wh_kwargs = dict(
+                    url=webhook_url,
+                    drop_pending_updates=False,
+                    max_connections=40,
+                )
+                if WEBHOOK_SECRET and WEBHOOK_SECRET != "your-secret-token":
+                    wh_kwargs["secret_token"] = WEBHOOK_SECRET
+                await asyncio.wait_for(bot.set_webhook(**wh_kwargs), timeout=15)
+                logger.info(f"Webhook установлен: {webhook_url}")
+            except asyncio.TimeoutError:
+                logger.error("Таймаут при установке вебхука (15с)")
+            except Exception as e:
+                logger.error(f"Ошибка установки вебхука: {e}")
+
+    app.state.setup_task = asyncio.create_task(_delayed_setup())
 
     yield
 
     # Завершение
     logger.info("Shutting down Astro-Numerology Bot...")
     try:
-        keep_alive_task = getattr(app.state, "keep_alive_task", None)
-        if keep_alive_task:
-            keep_alive_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await keep_alive_task
-        polling_task = getattr(app.state, "polling_task", None)
-        if polling_task:
-            polling_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await polling_task
+        for task_name in ("setup_task", "keep_alive_task", "polling_task"):
+            task = getattr(app.state, task_name, None)
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         # Удаляем вебхук ТОЛЬКО в режиме polling
         # В webhook-режиме НЕ удаляем, чтобы Telegram продолжал доставлять обновления
         if USE_POLLING:
