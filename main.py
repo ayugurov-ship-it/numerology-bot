@@ -200,7 +200,7 @@ async def keep_alive():
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
     # Запуск
-    logger.info("Starting Numerology Bot...")
+    logger.info("Starting Astro-Numerology Bot...")
 
     # Keep-alive для Render Free
     app.state.keep_alive_task = asyncio.create_task(keep_alive())
@@ -234,7 +234,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Завершение
-    logger.info("Shutting down Numerology Bot...")
+    logger.info("Shutting down Astro-Numerology Bot...")
     try:
         keep_alive_task = getattr(app.state, "keep_alive_task", None)
         if keep_alive_task:
@@ -256,8 +256,8 @@ async def lifespan(app: FastAPI):
     await storage.save_all(force=True)
 
 app = FastAPI(
-    title="Numerology Bot API",
-    description="Telegram бот для нумерологии с AI",
+    title="Astro-Numerology Bot API",
+    description="Telegram бот для астро-нумерологии с AI",
     version="2.0.0",
     lifespan=lifespan,
     docs_url="/api/docs",
@@ -292,28 +292,35 @@ dp.include_router(router)
 # =====================
 
 GROQ_SYSTEM_PROMPTS = {
-    "default": """Ты — профессиональный нумеролог-консультант с 20-летним опытом.
-Твоя задача — рассчитывать нумерологические значения и давать практические рекомендации.
+    "default": """Ты — профессиональный астро-нумеролог с 20-летним опытом.
+Ты сочетаешь астрологию (знаки зодиака, стихии) и нумерологию (числа жизненного пути).
 Пиши дружелюбно, уверенно, без мистического фанатизма.
-Язык: русский. Не упоминай, что ты ИИ.""",
+Язык: чистый литературный русский. Не упоминай, что ты ИИ.""",
 
-    "detailed": """Ты — эксперт по нумерологии и психологии личности.
-Анализируй даты рождения, давая глубокие, персонализированные инсайты.
-Формат: 1) Ключевое число, 2) Сильные стороны, 3) Зоны роста, 4) Практические советы.
-Будь точным, но вдохновляющим.""",
+    "profile": """Ты — эксперт по астрологии и нумерологии, создающий комбинированные портреты личности.
+Ты анализируешь знак зодиака (характеристики знака, стихию) и число жизненного пути одновременно,
+показывая как они дополняют друг друга и где создают интересные контрасты.
+Тон: уверенный, экспертный, без мистики. Язык: русский.""",
 
-    "compatibility": """Ты — специалист по отношениям и совместимости.
-Анализируй пары дат рождения, давая рекомендации для разных сфер жизни.
-Будь дипломатичным, подчеркивай сильные стороны пары.""",
+    "detailed": """Ты — глубокий эксперт по нумерологии и психологии личности.
+Анализируй числа даты рождения, давая глубокие персонализированные инсайты.
+Можешь кратко упомянуть знак зодиака как дополнительный контекст.
+Будь точным, но вдохновляющим. Язык: русский.""",
 
-    "forecast": """Ты — аналитик по циклам и прогнозам.
-На основе даты рождения делай прогнозы на указанный период.
-Сосредоточься на возможностях и вызовах, давай практические рекомендации.""",
+    "compatibility": """Ты — специалист по отношениям, совместимости и астро-нумерологии.
+Анализируй совместимость пар по двум системам: зодиакальная совместимость (знаки, стихии)
+и нумерологическая совместимость (числа жизненного пути).
+Будь дипломатичным, подчеркивай сильные стороны пары. Язык: русский.""",
 
-    "horoscope": """Ты — астролог-нумеролог.
-Создавай вдохновляющие, персонализированные гороскопы на основе чисел.
-Сочетай нумерологию с позитивной психологией.
-Будь креативным, но реалистичным."""
+    "horoscope": """Ты — профессиональный астролог с глубоким знанием нумерологии.
+Создавай персонализированные гороскопы, основываясь на знаке зодиака и его стихии,
+дополняя нумерологическими инсайтами (число жизненного пути).
+Тон: уверенный, конкретный, без общих фраз. Язык: русский.""",
+
+    "daily_card": """Ты — персональный астро-нумеролог, создающий карты дня.
+Ты формируешь карту дня из трёх компонентов: аффирмация, краткий прогноз, практический совет.
+Учитывай знак зодиака и число жизненного пути. Будь конкретным и практичным.
+Без эзотерики, без «вселенная/карма/потоки». Язык: русский."""
 }
 
 # =====================
@@ -322,7 +329,7 @@ GROQ_SYSTEM_PROMPTS = {
 
 class PersonalizationEngine:
     @staticmethod
-    async def update_user_profile(user_id: int, action: str, data: dict = None):
+    async def update_user_profile(user_id: int, action: str, data: dict = None, birth_date: str = None):
         user_id_str = str(user_id)
 
         if user_id_str not in storage.personalization["user_history"]:
@@ -331,6 +338,9 @@ class PersonalizationEngine:
                 "preferences": {},
                 "last_interaction": datetime.now().isoformat()
             }
+
+        if birth_date:
+            storage.personalization["user_history"][user_id_str]["birth_date"] = birth_date
 
         storage.personalization["user_history"][user_id_str]["actions"].append({
             "action": action,
@@ -341,6 +351,11 @@ class PersonalizationEngine:
         if len(storage.personalization["user_history"][user_id_str]["actions"]) > 50:
             storage.personalization["user_history"][user_id_str]["actions"] = storage.personalization["user_history"][user_id_str]["actions"][-50:]
         await storage.save_all()
+
+    @staticmethod
+    def get_user_birth_date(user_id: int) -> Optional[str]:
+        user_id_str = str(user_id)
+        return storage.personalization["user_history"].get(user_id_str, {}).get("birth_date")
 
     @staticmethod
     def get_user_preferences(user_id: int) -> dict:
@@ -407,6 +422,41 @@ class NumerologyFeatures:
         }
 
         return affirmations.get(life_number, "Я принимаю сегодняшний день с благодарностью и открытостью")
+
+# =====================
+# ZODIAC SIGNS
+# =====================
+
+ZODIAC_SIGNS = [
+    ((3, 21), (4, 19), "Овен", "♈", "огонь"),
+    ((4, 20), (5, 20), "Телец", "♉", "земля"),
+    ((5, 21), (6, 20), "Близнецы", "♊", "воздух"),
+    ((6, 21), (7, 22), "Рак", "♋", "вода"),
+    ((7, 23), (8, 22), "Лев", "♌", "огонь"),
+    ((8, 23), (9, 22), "Дева", "♍", "земля"),
+    ((9, 23), (10, 22), "Весы", "♎", "воздух"),
+    ((10, 23), (11, 21), "Скорпион", "♏", "вода"),
+    ((11, 22), (12, 21), "Стрелец", "♐", "огонь"),
+    ((12, 22), (12, 31), "Козерог", "♑", "земля"),
+    ((1, 1), (1, 19), "Козерог", "♑", "земля"),
+    ((1, 20), (2, 18), "Водолей", "♒", "воздух"),
+    ((2, 19), (3, 20), "Рыбы", "♓", "вода"),
+]
+
+def get_zodiac_sign(date_str: str) -> Optional[dict]:
+    """Определяет знак зодиака по дате рождения DD.MM.YYYY"""
+    try:
+        day, month, _ = map(int, date_str.split('.'))
+        for (m1, d1), (m2, d2), name, emoji, element in ZODIAC_SIGNS:
+            if m1 == m2:
+                if month == m1 and d1 <= day <= d2:
+                    return {"name": name, "emoji": emoji, "element": element}
+            elif m1 < m2:
+                if (month == m1 and day >= d1) or (month == m2 and day <= d2):
+                    return {"name": name, "emoji": emoji, "element": element}
+        return None
+    except Exception:
+        return None
 
 # =====================
 # RETRY DECORATOR FOR GROQ
@@ -527,11 +577,10 @@ async def generate_ai_affirmation(date_str: str, life_number: int, target_date_s
 
 def main_menu(user_id: int = None):
     keyboard = [
-        [KeyboardButton(text="✨ Мой нумерологический портрет")],
-        [KeyboardButton(text="💞 Совместимость партнеров")],
-        [KeyboardButton(text="📅 Прогноз на период")],
-        [KeyboardButton(text="🌟 Персональный гороскоп")],
-        [KeyboardButton(text="🔄 Моя аффирмация дня")]
+        [KeyboardButton(text="🔮 Мой профиль")],
+        [KeyboardButton(text="♈ Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
+        [KeyboardButton(text="💞 Совместимость")],
+        [KeyboardButton(text="✨ Карта дня")]
     ]
 
     if user_id in ADMIN_IDS:
@@ -554,20 +603,6 @@ def admin_menu():
             [KeyboardButton(text="🔙 В главное меню")]
         ],
         resize_keyboard=True
-    )
-
-def forecast_period_menu():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📅 На месяц", callback_data="forecast_month"),
-                InlineKeyboardButton(text="📆 На 3 месяца", callback_data="forecast_quarter")
-            ],
-            [
-                InlineKeyboardButton(text="🎯 На год", callback_data="forecast_year"),
-                InlineKeyboardButton(text="✨ На неделю", callback_data="forecast_week")
-            ]
-        ]
     )
 
 def horoscope_type_menu():
@@ -681,10 +716,10 @@ async def start(m: Message):
     user_name = format_user_name(m.from_user)
 
     welcome_messages = [
-        f"✨ Приветствую, {user_name}! Я — ваш личный нумеролог.",
-        f"🌟 Добро пожаловать, {user_name}! Готовы раскрыть тайны чисел?",
-        f"🔮 Здравствуйте, {user_name}! Числа расскажут многое о вашем пути.",
-        f"💫 Рад видеть вас, {user_name}! Давайте исследуем мир нумерологии вместе."
+        f"✨ Приветствую, {user_name}! Я — ваш личный астро-нумеролог.",
+        f"🌟 Добро пожаловать, {user_name}! Готовы раскрыть тайны звёзд и чисел?",
+        f"🔮 Здравствуйте, {user_name}! Звёзды и числа расскажут многое о вашем пути.",
+        f"💫 Рад видеть вас, {user_name}! Давайте исследуем мир астрологии и нумерологии вместе."
     ]
 
     welcome_text = random.choice(welcome_messages) + "\n\n" + "Выберите, что вас интересует:"
@@ -692,101 +727,50 @@ async def start(m: Message):
     await m.answer(welcome_text, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "start")
 
-@router.message(lambda m: m.text == "✨ Мой нумерологический портрет")
-async def numerology_portrait(m: Message):
+@router.message(lambda m: m.text == "🔮 Мой профиль")
+async def profile_main(m: Message):
     user_id = m.from_user.id
-    await PersonalizationEngine.update_user_profile(user_id, "portrait_request")
-
+    await PersonalizationEngine.update_user_profile(user_id, "profile_request")
     await m.answer(
-        "✨ *Нумерологический портрет*\n\n"
+        "🔮 *Мой профиль*\n\n"
         "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
         "Например: 15.05.1990\n\n"
-        "Я рассчитаю:\n"
-        "• Число жизненного пути 🛤️\n"
-        "• Число судьбы 🌟\n"
-        "• Число характера 🔥\n"
+        "Я составлю ваш комбинированный портрет:\n"
+        "• Знак зодиака и стихия ♈\n"
+        "• Число жизненного пути 🔢\n"
+        "• Черты личности 🔥\n"
         "• Сильные стороны 💪\n"
-        "• Рекомендации для роста 📈",
+        "• Карьера и отношения 💫\n"
+        "• Персональные рекомендации 📈",
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
 
-@router.message(lambda m: m.text == "💞 Совместимость партнеров")
+@router.message(lambda m: m.text == "💞 Совместимость")
 async def compatibility_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "compatibility_request_general")
-
     await m.answer(
-        "💞 *Совместимость партнеров*\n\n"
+        "💞 *Совместимость*\n\n"
         "Введите две даты рождения через пробел:\n\n"
-        "*Формат:* ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n"
-        "*Пример:* 15.05.1990 20.08.1985\n\n"
-        "Я проанализирую вашу общую совместимость:\n"
-        "• Энергетическую гармонию ⚡\n"
-        "• Эмоциональное соответствие 💖\n"
-        "• Интеллектуальную связь 🧠\n"
-        "• Практическую совместимость 🤝\n"
-        "• Сильные стороны союза 💪\n"
-        "• Рекомендации для развития 🔄",
+        "Например: 15.05.1990 22.08.1988\n\n"
+        "Я проанализирую совместимость по:\n"
+        "• Знакам зодиака и стихиям ♈♌\n"
+        "• Числам жизненного пути 🔢\n"
+        "• Типам отношений 💑\n"
+        "• Сильным сторонам пары 💪\n"
+        "• Зонам роста отношений 🔄",
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
 
-@router.message(lambda m: m.text == "📅 Прогноз на период")
-async def forecast_main(m: Message):
-    user_id = m.from_user.id
-    await PersonalizationEngine.update_user_profile(user_id, "forecast_request")
-
-    await m.answer(
-        "📅 *Прогноз на период*\n\n"
-        "Выберите период для анализа:",
-        parse_mode="Markdown",
-        reply_markup=forecast_period_menu()
-    )
-
-@router.callback_query(lambda c: c.data.startswith("forecast_"))
-async def process_forecast_period(callback: types.CallbackQuery):
-    period = callback.data.split("_")[1]
-    user_id = callback.from_user.id
-
-    if str(user_id) not in storage.users:
-        storage.users[str(user_id)] = {}
-
-    storage.users[str(user_id)]["last_forecast_period"] = period
-    await storage.save_all()
-
-    period_names = {
-        "week": "неделю ✨",
-        "month": "месяц 📅",
-        "quarter": "3 месяца 📆",
-        "year": "год 🎯"
-    }
-
-    if period not in period_names:
-        period = "month"
-
-    await callback.message.edit_text(
-        f"📅 *Прогноз на {period_names[period]}*\n\n"
-        "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-        "Я сделаю нумерологический прогноз:\n"
-        "• Благоприятные периоды 🌟\n"
-        "• Возможные вызовы ⚠️\n"
-        "• Рекомендации для успеха 💡\n"
-        "• Фокусные области 🎯",
-        parse_mode="Markdown"
-    )
-
-    await PersonalizationEngine.update_user_profile(callback.from_user.id, f"forecast_{period}")
-    await callback.answer()
-
-@router.message(lambda m: m.text == "🌟 Персональный гороскоп")
+@router.message(lambda m: m.text == "♈ Гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
-
     await m.answer(
-        "🌟 *Персональный гороскоп*\n\n"
-        "Выберите период для гороскопа:",
+        "♈ *Гороскоп*\n\n"
+        "Выберите период для вашего астро-нумерологического гороскопа:",
         parse_mode="Markdown",
         reply_markup=horoscope_type_menu()
     )
@@ -816,21 +800,39 @@ async def process_horoscope_type(callback: types.CallbackQuery):
     await PersonalizationEngine.update_user_profile(callback.from_user.id, f"horoscope_{h_type}")
     await callback.answer()
 
-@router.message(lambda m: m.text == "🔄 Моя аффирмация дня")
-async def daily_affirmation(m: Message):
+@router.message(lambda m: m.text == "🔢 Нумерология")
+async def numerology_main(m: Message):
     user_id = m.from_user.id
-
+    await PersonalizationEngine.update_user_profile(user_id, "numerology_request")
     await m.answer(
-        "🔄 *Моя аффирмация дня*\n\n"
+        "🔢 *Нумерология*\n\n"
         "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-        "Я создам для вас персональную аффирмацию —\n"
-        "утверждение, которое поможет настроиться\n"
-        "на удачный день и привлечь позитивную энергию.",
+        "Например: 15.05.1990\n\n"
+        "Я сделаю глубокий нумерологический расклад:\n"
+        "• Число жизненного пути 🛤️\n"
+        "• Число судьбы 🌟\n"
+        "• Число характера 🔥\n"
+        "• Сильные стороны 💪\n"
+        "• Рекомендации для роста 📈",
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
 
-    await PersonalizationEngine.update_user_profile(user_id, "affirmation_request")
+@router.message(lambda m: m.text == "✨ Карта дня")
+async def daily_card_main(m: Message):
+    user_id = m.from_user.id
+    stored_date = PersonalizationEngine.get_user_birth_date(user_id)
+    if stored_date:
+        await daily_card_handler(m, stored_date)
+    else:
+        await PersonalizationEngine.update_user_profile(user_id, "daily_card_request")
+        await m.answer(
+            "✨ *Карта дня*\n\n"
+            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+            "В следующий раз я запомню вашу дату!",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
 
 @router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
@@ -897,11 +899,10 @@ async def admin_stats(m: Message):
 • Новых в этом месяце: {users_this_month}
 
 📈 *Анализов выполнено (всего: {total_calculations}):*
-• Нумерологических портретов: {storage.stats.get("calculations", 0)}
+• Профилей и нумерологий: {storage.stats.get("calculations", 0)}
 • Проверок совместимости: {storage.stats.get("compatibility_checks", 0)}
-• Прогнозов на периоды: {storage.stats.get("forecasts", 0)}
+• Прогнозов (архив): {storage.stats.get("forecasts", 0)}
 • Персональных гороскопов: {storage.stats.get("horoscopes", 0)}
-• Аффирмаций: {storage.stats.get("daily_stats", {}).get("affirmations", 0)}
 
 📊 *Средние показатели:*
 • Запросов на пользователя: {avg_requests:.1f}
@@ -1009,25 +1010,25 @@ async def about_bot(m: Message):
     user_id = m.from_user.id
 
     about_text = f"""
-🌟 *Нумерологический бот с AI*
+🌟 *Астро-нумерологический бот с AI*
 
-Я — ваш персональный нумеролог, использующий искусственный интеллект для глубокого анализа.
+Я — ваш персональный астро-нумеролог, использующий искусственный интеллект для глубокого анализа.
 
 ✨ *Что я умею:*
-• Создавать подробный нумерологический портрет
-• Анализировать совместимость для разных типов отношений
-• Делать прогнозы на выбранный период
-• Генерировать персональные гороскопы
-• Создавать аффирмации для вашего дня
+• Создавать комбинированный профиль (астрология + нумерология)
+• Составлять глубокий нумерологический портрет
+• Генерировать персональные гороскопы по знаку зодиака
+• Анализировать совместимость по знакам и числам
+• Создавать карту дня с аффирмацией и прогнозом
 
 🔮 *Мой подход:*
-Я сочетаю древнюю мудрость нумерологии с современными психологическими знаниями. Все анализы уникальны и создаются специально для вас.
+Я сочетаю астрологию (знаки зодиака, стихии) и нумерологию (числа жизненного пути) с современными психологическими знаниями. Все анализы уникальны и создаются специально для вас.
 
 📊 *Статистика:*
 • Пользователей: {storage.stats["total_users"]}
-• Анализов выполнено: {storage.stats.get("calculations", 0) + storage.stats.get("compatibility_checks", 0) + storage.stats.get("forecasts", 0)}
+• Анализов выполнено: {storage.stats.get("calculations", 0) + storage.stats.get("compatibility_checks", 0) + storage.stats.get("horoscopes", 0)}
 
-💡 *Совет:* Регулярно обращайтесь за анализом — числа могут раскрывать новые грани вашего пути!
+💡 *Совет:* Регулярно обращайтесь за анализом — звёзды и числа могут раскрывать новые грани вашего пути!
 
 🌐 *Веб-админка:* {BASE_URL}{ADMIN_PATH}
 """
@@ -1042,33 +1043,37 @@ async def about_bot(m: Message):
 async def date_analysis_handler(m: Message):
     user_id = m.from_user.id
     date_str = m.text
-
     user_history = storage.personalization["user_history"].get(str(user_id), {"actions": []})
-
     if not user_history["actions"]:
-        await process_portrait(m, date_str)
+        await process_profile(m, date_str)
         return
-
     last_action = user_history["actions"][-1]["action"]
-
-    if "forecast" in last_action:
-        await forecast_handler(m, date_str, last_action)
-    elif "horoscope" in last_action:
+    if "horoscope" in last_action:
         await horoscope_handler(m, date_str, last_action)
-    elif last_action == "affirmation_request":
-        await affirmation_handler(m, date_str)
-    elif last_action == "portrait_request":
-        await process_portrait(m, date_str)
+    elif last_action == "numerology_request":
+        await process_numerology(m, date_str)
+    elif last_action == "daily_card_request":
+        await daily_card_handler(m, date_str)
+    elif last_action in ("profile_request", "portrait_request"):
+        await process_profile(m, date_str)
+    elif "forecast" in last_action:
+        await horoscope_handler(m, date_str, last_action)
     else:
-        await process_portrait(m, date_str)
+        await process_profile(m, date_str)
 
-async def process_portrait(m: Message, date_str: str):
+async def process_profile(m: Message, date_str: str):
     user_id = m.from_user.id
 
-    await m.answer("✨ Анализирую ваш нумерологический портрет...")
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    zodiac = get_zodiac_sign(date_str)
+    zodiac_name = zodiac["name"] if zodiac else "не определён"
+    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
+    zodiac_element = zodiac["element"] if zodiac else "не определена"
+
+    await m.answer("🔮 Составляю ваш профиль...")
 
     storage.stats["calculations"] = storage.stats.get("calculations", 0) + 1
-    storage.stats["popular_features"]["portrait"] = storage.stats["popular_features"].get("portrait", 0) + 1
+    storage.stats["popular_features"]["profile"] = storage.stats["popular_features"].get("profile", 0) + 1
     storage.stats["daily_stats"]["calculations"] = storage.stats["daily_stats"].get("calculations", 0) + 1
 
     user_id_str = str(user_id)
@@ -1080,13 +1085,11 @@ async def process_portrait(m: Message, date_str: str):
     storage.stats["user_last_activity"][user_id_str] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await storage.save_all()
 
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-
     prompt = f"""
-Ты — профессиональный нумеролог и психолог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог и психолог-консультант премиум-уровня.
 
-Создай глубокий персональный нумерологический портрет для человека,
-родившегося {date_str}.
+Создай комбинированный портрет личности для человека, родившегося {date_str}.
+Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
 Число жизненного пути: {life_number if life_number else "не определено"}.
 
 ТРЕБОВАНИЯ К СТИЛЮ:
@@ -1100,25 +1103,25 @@ async def process_portrait(m: Message, date_str: str):
 
 СТРУКТУРА (строго соблюдать):
 
-1. КЛЮЧЕВОЕ ЧИСЛО И СМЫСЛ ЖИЗНЕННОГО ПУТИ  
-Кратко и точно: как это число проявляется в характере и жизненных задачах.
+1. ЗНАК ЗОДИАКА + ЧИСЛО ПУТИ: ОБЗОР
+Как знак {zodiac_name} (стихия {zodiac_element}) и число {life_number} сочетаются, дополняют или контрастируют друг с другом.
 
-2. ОСНОВНЫЕ ЧЕРТЫ ЛИЧНОСТИ  
-Опишите сильные и сложные стороны характера, включая внутренние противоречия.
+2. ЧЕРТЫ ЛИЧНОСТИ (АСТРО + НУМЕРО)
+Опишите характер через призму обеих систем: что даёт знак зодиака, что — число пути.
 
-3. СИЛЬНЫЕ СТОРОНЫ  
-3–4 качества, которые дают человеку устойчивость и надёжность в жизни.
+3. СИЛЬНЫЕ СТОРОНЫ
+3–4 качества, объединяющие астрологические и нумерологические характеристики.
 
-4. ЗОНЫ РОСТА  
+4. ЗОНЫ РОСТА
 Не более 3 пунктов. Честно, но поддерживающе.
 
-5. РЕАЛИЗАЦИЯ И КАРЬЕРА  
-В каких ролях и форматах человек раскрывается лучше всего.
+5. КАРЬЕРА И РЕАЛИЗАЦИЯ
+В каких ролях и форматах человек раскрывается лучше всего с учётом знака и числа.
 
-6. ОТНОШЕНИЯ И ЛИЧНАЯ ЖИЗНЬ  
-Как человек проявляется в близких отношениях и что для него важно.
+6. ОТНОШЕНИЯ
+Как знак зодиака и число пути влияют на стиль в близких отношениях.
 
-7. ИТОГОВЫЙ ВЕКТОР  
+7. ИТОГОВЫЙ ВЕКТОР
 Одно ёмкое резюме личности.
 
 ОБЪЁМ: 300–360 слов.
@@ -1128,11 +1131,98 @@ async def process_portrait(m: Message, date_str: str):
 - клише
 - общие формулировки
 - философские рассуждения
-- астрология
+"""
+
+    analysis = await ask_groq(prompt, "profile")
+    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "profile")
+
+    final_response = f"""
+🔮 *Ваш профиль* 🔮
+
+{personalized_analysis}
+
+*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
+📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
+"""
+
+    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
+    await PersonalizationEngine.update_user_profile(user_id, "profile_analysis", {"date": date_str}, birth_date=date_str)
+
+async def process_numerology(m: Message, date_str: str):
+    user_id = m.from_user.id
+
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    zodiac = get_zodiac_sign(date_str)
+    zodiac_name = zodiac["name"] if zodiac else "не определён"
+    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
+    zodiac_element = zodiac["element"] if zodiac else "не определена"
+
+    await m.answer("🔢 Анализирую ваш нумерологический портрет...")
+
+    storage.stats["calculations"] = storage.stats.get("calculations", 0) + 1
+    storage.stats["popular_features"]["numerology"] = storage.stats["popular_features"].get("numerology", 0) + 1
+    storage.stats["daily_stats"]["calculations"] = storage.stats["daily_stats"].get("calculations", 0) + 1
+
+    user_id_str = str(user_id)
+    if user_id_str in storage.users:
+        storage.users[user_id_str]["last_active"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        storage.users[user_id_str]["total_requests"] = storage.users[user_id_str].get("total_requests", 0) + 1
+        await storage.save_all()
+
+    storage.stats["user_last_activity"][user_id_str] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    await storage.save_all()
+
+    prompt = f"""
+Ты — профессиональный нумеролог и психолог-консультант премиум-уровня.
+
+Создай глубокий персональный нумерологический портрет для человека,
+родившегося {date_str}.
+Число жизненного пути: {life_number if life_number else "не определено"}.
+Знак зодиака: {zodiac_name} ({zodiac_element}). Кратко упомяни, как знак дополняет число жизненного пути.
+
+ТРЕБОВАНИЯ К СТИЛЮ:
+- чистый литературный русский
+- спокойный, уверенный, экспертный тон
+- без мистического пафоса
+- без шаблонных фраз
+- обращение к человеку на «вы»
+- НЕ писать от первого лица
+- писать как личный консультант
+
+СТРУКТУРА (строго соблюдать):
+
+1. КЛЮЧЕВОЕ ЧИСЛО И СМЫСЛ ЖИЗНЕННОГО ПУТИ
+Кратко и точно: как это число проявляется в характере и жизненных задачах.
+
+2. ОСНОВНЫЕ ЧЕРТЫ ЛИЧНОСТИ
+Опишите сильные и сложные стороны характера, включая внутренние противоречия.
+
+3. СИЛЬНЫЕ СТОРОНЫ
+3–4 качества, которые дают человеку устойчивость и надёжность в жизни.
+
+4. ЗОНЫ РОСТА
+Не более 3 пунктов. Честно, но поддерживающе.
+
+5. РЕАЛИЗАЦИЯ И КАРЬЕРА
+В каких ролях и форматах человек раскрывается лучше всего.
+
+6. ОТНОШЕНИЯ И ЛИЧНАЯ ЖИЗНЬ
+Как человек проявляется в близких отношениях и что для него важно.
+
+7. ИТОГОВЫЙ ВЕКТОР
+Одно ёмкое резюме личности.
+
+ОБЪЁМ: 300–360 слов.
+
+ЗАПРЕЩЕНО:
+- писать «я»
+- клише
+- общие формулировки
+- философские рассуждения
 """
 
     analysis = await ask_groq(prompt, "detailed")
-    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "portrait")
+    personalized_analysis = PersonalizationEngine.personalize_response(user_id, analysis, "numerology")
 
     affirmation = await generate_ai_affirmation(
         date_str,
@@ -1142,112 +1232,19 @@ async def process_portrait(m: Message, date_str: str):
     )
 
     final_response = f"""
-✨ *Ваш нумерологический портрет* ✨
+🔢 *Ваш нумерологический портрет* 🔢
 
 {personalized_analysis}
 
 🔄 *Аффирмация дня:*
 {affirmation}
 
-🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
+*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
 📅 *Дата анализа:* {datetime.now().strftime("%d.%m.%Y")}
 """
 
     await safe_reply(m, final_response, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, "portrait_analysis", {"date": date_str})
-
-async def forecast_handler(m: Message, date_str: str, last_action: str):
-    user_id = m.from_user.id
-
-    if "_" in last_action:
-        period = last_action.split("_")[1]
-    else:
-        period = "month"
-
-    period_names = {
-        "week": "неделю",
-        "month": "месяц",
-        "quarter": "3 месяца",
-        "year": "год"
-    }
-
-    period_display = period_names.get(period, "месяц")
-
-    await m.answer(f"📅 Анализирую ваш прогноз на {period_display}...")
-
-    storage.stats["forecasts"] = storage.stats.get("forecasts", 0) + 1
-    await storage.save_all()
-
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    current_date = datetime.now().strftime("%d.%m.%Y")
-
-    prompt = f"""
-Ты — профессиональный нумеролог-консультант премиум-уровня.
-
-Создай персональный нумерологический прогноз на {period_display} для человека, родившегося {date_str}.
-Дата начала периода: {current_date}.
-Число жизненного пути: {life_number if life_number else 'не определено'}.
-
-ВАЖНО:
-- Используй ТОЛЬКО нумерологию и психологический анализ
-- НЕ используй астрологию (знаки, планеты, Луну, Солнце, аспекты)
-- Не упоминай расчёты и формулы
-- Пиши как личный консультант
-- Обращение на «вы»
-- Чистый литературный русский
-- Без мистического пафоса
-- Без общих фраз
-
-СТРУКТУРА (строго соблюдать):
-
-1. ОБЩАЯ ТЕМА ПЕРИОДА  
-Опиши главный фокус периода именно для человека с этим числом жизненного пути.
-
-2. ВНУТРЕННИЙ РИТМ ПЕРИОДА  
-Как будет меняться энергия, концентрация и мотивация в течение {period_display}.
-
-3. БЛАГОПРИЯТНЫЕ ОТРЕЗКИ  
-Опиши 2–3 временных отрезка (начало / середина / конец периода)  
-и для чего они лучше всего подходят (работа, решения, отдых, общение).
-
-4. ВОЗМОЖНЫЕ ВЫЗОВЫ  
-Какие модели поведения могут мешать и на что стоит обратить внимание.
-
-5. ПРАКТИЧЕСКИЕ РЕКОМЕНДАЦИИ  
-Конкретные действия, которые помогут пройти период максимально эффективно.
-
-6. ФОКУСНЫЕ СФЕРЫ ПЕРИОДА  
-2–3 сферы жизни, где результаты будут наиболее заметны.
-
-7. ИТОГ ПЕРИОДА  
-Одно ёмкое резюме.
-
-ОБЪЁМ:
-- неделя: 180–200 слов
-- месяц: 240–280 слов
-- год: 300–350 слов
-
-ЗАПРЕЩЕНО:
-- астрология
-- даты, привязанные к Луне или планетам
-- клише
-- философские рассуждения
-"""
-
-    forecast = await ask_groq(prompt, "forecast")
-
-    final_response = f"""
-📅 *Ваш нумерологический прогноз* 📅
-*Период: {period_display.capitalize()}*
-*Начало анализа: {current_date}*
-
-{forecast}
-
-🌟 *Число жизненного пути:* {life_number if life_number else "не определено"}
-"""
-
-    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, f"forecast_generated_{period}", {"date": date_str, "period": period})
+    await PersonalizationEngine.update_user_profile(user_id, "numerology_analysis", {"date": date_str}, birth_date=date_str)
 
 @router.message(lambda m: m.text and len(m.text.split()) == 2 and all("." in part for part in m.text.split()))
 async def compatibility_analysis_handler(m: Message):
@@ -1265,16 +1262,23 @@ async def compatibility_analysis_handler(m: Message):
     storage.stats["compatibility_checks"] = storage.stats.get("compatibility_checks", 0) + 1
     await storage.save_all()
 
+    life1 = NumerologyFeatures.calculate_life_path_number(date1)
+    life2 = NumerologyFeatures.calculate_life_path_number(date2)
+    zodiac1 = get_zodiac_sign(date1)
+    zodiac2 = get_zodiac_sign(date2)
+    z1_name = zodiac1["name"] if zodiac1 else "не определён"
+    z1_emoji = zodiac1["emoji"] if zodiac1 else "🔮"
+    z1_element = zodiac1["element"] if zodiac1 else "не определена"
+    z2_name = zodiac2["name"] if zodiac2 else "не определён"
+    z2_emoji = zodiac2["emoji"] if zodiac2 else "🔮"
+    z2_element = zodiac2["element"] if zodiac2 else "не определена"
+
     prompt = f"""
-Ты — профессиональный консультант по отношениям и нумерологии премиум-уровня.
+Ты — профессиональный консультант по отношениям, астрологии и нумерологии премиум-уровня.
 
 Создай персональный анализ совместимости двух людей по датам рождения:
-1) {date1}
-2) {date2}
-
-Числа жизненного пути:
-- первый человек: {NumerologyFeatures.calculate_life_path_number(date1)}
-- второй человек: {NumerologyFeatures.calculate_life_path_number(date2)}
+1) {date1} — {z1_name} (стихия: {z1_element}), число пути: {life1}
+2) {date2} — {z2_name} (стихия: {z2_element}), число пути: {life2}
 
 Требования к стилю:
 - чистый литературный русский
@@ -1286,23 +1290,23 @@ async def compatibility_analysis_handler(m: Message):
 
 СТРУКТУРА (строго соблюдать):
 
-1. ОБЩАЯ ОЦЕНКА СОВМЕСТИМОСТИ  
-Укажи процент совместимости и **кратко объясни**, за счёт каких факторов он сформирован.
+1. ЗОДИАКАЛЬНАЯ СОВМЕСТИМОСТЬ
+Анализ пары {z1_name}–{z2_name}: как взаимодействуют их стихии ({z1_element} и {z2_element}), что даёт это сочетание знаков.
 
-2. ОСОБЕННОСТИ ЭТОЙ ПАРЫ  
-Опиши уникальность сочетания их чисел жизненного пути и общий психологический фон союза.
+2. НУМЕРОЛОГИЧЕСКАЯ СОВМЕСТИМОСТЬ
+Как сочетаются числа жизненного пути {life1} и {life2}, что это означает для отношений.
 
-3. СИЛЬНЫЕ СТОРОНЫ СОЮЗА  
+3. ОБЩАЯ ОЦЕНКА СОВМЕСТИМОСТИ
+Укажи процент совместимости и кратко объясни, за счёт каких факторов он сформирован.
+
+4. СИЛЬНЫЕ СТОРОНЫ СОЮЗА
 3–4 конкретных пункта с пояснениями.
 
-4. ВОЗМОЖНЫЕ СЛОЖНОСТИ И РИСКИ  
+5. ВОЗМОЖНЫЕ СЛОЖНОСТИ И РИСКИ
 Не более 3 пунктов. Без обвинений, только зоны роста.
 
-5. РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЧНОГО РАЗВИТИЯ  
+6. РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЧНОГО РАЗВИТИЯ
 Практичные советы, применимые в реальной жизни.
-
-6. ГДЕ ЭТА ПАРА НАИБОЛЕЕ СИЛЬНА  
-Одна основная сфера с пояснением (работа, творчество, отношения, развитие и т.д.).
 
 ОБЪЁМ: 270–300 слов.
 
@@ -1319,15 +1323,12 @@ async def compatibility_analysis_handler(m: Message):
     final_response = f"""
 💞 *Анализ совместимости* 💞
 
-*Даты:*
-• {date1}
-• {date2}
+*{z1_emoji} {z1_name} (путь {life1}) + {z2_emoji} {z2_name} (путь {life2})*
 
 {personalized_analysis}
 
-🔢 *Числа жизненного пути:*
-• {NumerologyFeatures.calculate_life_path_number(date1) or '?'}
-• {NumerologyFeatures.calculate_life_path_number(date2) or '?'}
+*{z1_emoji} {z1_name} | Число пути: {life1}*
+*{z2_emoji} {z2_name} | Число пути: {life2}*
 """
     await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
@@ -1373,20 +1374,27 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         target_date = today
         date_description = f"{today.strftime('%d.%m.%Y')} (сегодня)"
 
-    await m.answer(f"🌟 Создаю гороскоп на {period_display}...")
+    await m.answer(f"♈ Создаю гороскоп на {period_display}...")
 
     storage.stats["horoscopes"] = storage.stats.get("horoscopes", 0) + 1
     await storage.save_all()
 
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    zodiac = get_zodiac_sign(date_str)
+    zodiac_name = zodiac["name"] if zodiac else "не определён"
+    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
+    zodiac_element = zodiac["element"] if zodiac else "не определена"
     period_header = f"{period_display.capitalize()} ({date_description})"
 
     if h_type in ["today", "tomorrow"]:
         prompt = f"""
-Ты — профессиональный нумеролог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог-консультант премиум-уровня.
 
-Создай персональный нумерологический гороскоп на {period_header} для человека, родившегося {date_str}.
+Создай персональный гороскоп на {period_header} для человека, родившегося {date_str}.
+Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
 Число жизненного пути: {life_number if life_number else 'не определено'}.
+
+Основывай гороскоп на астрологии (характеристики знака, энергия стихии) и дополняй нумерологическими инсайтами (число жизненного пути).
 
 Требования к стилю:
 - чистый литературный русский
@@ -1400,10 +1408,10 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 Структура ответа (строго соблюдать):
 
 1. КРАТКОЕ ВСТУПЛЕНИЕ
-1–2 предложения с упоминанием даты и смысла дня именно для человека с этим числом жизненного пути.
+1–2 предложения с упоминанием даты, знака зодиака и числа пути.
 
 2. ЭНЕРГИЯ ДНЯ
-Один абзац: эмоциональный фон, уровень концентрации, внутренний ритм дня.
+Один абзац: эмоциональный фон, уровень концентрации, внутренний ритм дня с учётом знака и числа.
 
 3. КЛЮЧЕВЫЕ СФЕРЫ:
 • Работа и финансы — конкретные тенденции и что лучше делать
@@ -1413,7 +1421,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 4. ВОЗМОЖНЫЕ ВЫЗОВЫ ДНЯ
 1 абзац: реальные риски поведения или решений.
 
-5. СОВЕТ ОТ ЧИСЕЛ
+5. СОВЕТ ДНЯ
 Одна практическая рекомендация, применимая в жизни.
 
 6. ЧИСЛО УДАЧИ ДНЯ
@@ -1426,17 +1434,19 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 Запрещено:
 - английские слова
 - транслитерация
-- слова «период», «энергии недели/месяца»
 - абстрактная философия
 
 Говори только про этот конкретный день.
 """
     elif h_type == "week":
         prompt = f"""
-Ты - профессиональный психолог и нумеролог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог-консультант премиум-уровня.
 
-Создай персональный нумерологический гороскоп на неделю ({date_description}) для человека, родившегося {date_str}.
+Создай персональный гороскоп на неделю ({date_description}) для человека, родившегося {date_str}.
+Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
 Число жизненного пути: {life_number if life_number else 'не определено'}.
+
+Основывай гороскоп на астрологии (тенденции знака, энергия стихии) и дополняй нумерологическими инсайтами.
 
 Стиль:
 - деловой, спокойный, психологически точный
@@ -1446,8 +1456,8 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 Структура:
 
-1. ОБЩАЯ ТЕМА НЕДЕЛИ  
-Главный фокус и внутреннее состояние человека с этим числом жизненного пути.
+1. ОБЩАЯ ТЕМА НЕДЕЛИ
+Главный фокус для {zodiac_name} с числом пути {life_number}.
 
 2. ПЕРВАЯ ПОЛОВИНА НЕДЕЛИ ({target_date_start.strftime('%d.%m')}–{(target_date_start + timedelta(days=3)).strftime('%d.%m')}):
 - ключевые тенденции
@@ -1459,13 +1469,13 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 - возможности
 - риски
 
-4. ВАЖНЫЕ ДАТЫ НЕДЕЛИ  
+4. ВАЖНЫЕ ДАТЫ НЕДЕЛИ
 Укажи 2–3 конкретные даты и их смысл.
 
-5. СОВЕТ НА НЕДЕЛЮ  
+5. СОВЕТ НА НЕДЕЛЮ
 Практическая стратегия поведения.
 
-6. ЧИСЛО НЕДЕЛИ  
+6. ЧИСЛО НЕДЕЛИ
 Как оно влияет именно на этого человека.
 
 Объём: 250–300 слов.
@@ -1477,10 +1487,13 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 """
     elif h_type == "month":
         prompt = f"""
-Ты — профессиональный нумеролог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог-консультант премиум-уровня.
 
-Создай персональный нумерологический гороскоп на месяц ({date_description}) для человека, родившегося {date_str}.
+Создай персональный гороскоп на месяц ({date_description}) для человека, родившегося {date_str}.
+Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
 Число жизненного пути: {life_number if life_number else 'не определено'}.
+
+Основывай гороскоп на астрологии (характеристики знака, стихия) и дополняй нумерологическими инсайтами.
 
 Стиль:
 - экспертный
@@ -1491,8 +1504,8 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 Структура:
 
-1. ОБЩАЯ ТЕМА МЕСЯЦА  
-Главный вектор развития и внутренний фокус месяца.
+1. ОБЩАЯ ТЕМА МЕСЯЦА
+Главный вектор развития для {zodiac_name} с числом пути {life_number}.
 
 2. ПЕРВАЯ ДЕКАДА (1–10):
 - задачи периода
@@ -1509,13 +1522,13 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 - благоприятные действия
 - ограничения
 
-5. КЛЮЧЕВЫЕ ДАТЫ МЕСЯЦА  
+5. КЛЮЧЕВЫЕ ДАТЫ МЕСЯЦА
 3–4 конкретных числа с кратким пояснением.
 
-6. СОВЕТ НА МЕСЯЦ  
+6. СОВЕТ НА МЕСЯЦ
 Стратегическая рекомендация.
 
-7. ЧИСЛО МЕСЯЦА  
+7. ЧИСЛО МЕСЯЦА
 Как его использовать в работе, отношениях или решениях.
 
 Объём: 300–350 слов.
@@ -1543,7 +1556,8 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     )
 
     final_response = f"""
-🌟 *Ваш персональный гороскоп* 🌟
+♈ *Ваш персональный гороскоп* ♈
+*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
 *На {period_header}*
 
 {horoscope}
@@ -1551,47 +1565,60 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 🔄 *{affirmation_title}:*
 {affirmation}
 
-✨ *Число жизненного пути:* {life_number if life_number else '?'}
 📅 *Дата создания гороскопа:* {today.strftime("%d.%m.%Y %H:%M")}
 """
 
     await safe_reply(m, final_response, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{h_type}", {"date": date_str, "period": h_type})
+    await PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{h_type}", {"date": date_str, "period": h_type}, birth_date=date_str)
 
-async def affirmation_handler(m: Message, date_str: str):
+async def daily_card_handler(m: Message, date_str: str):
     user_id = m.from_user.id
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    today = datetime.now()
+    zodiac = get_zodiac_sign(date_str)
+    zodiac_name = zodiac["name"] if zodiac else "не определён"
+    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
+    zodiac_element = zodiac["element"] if zodiac else "не определена"
+    today = datetime.now().strftime("%d.%m.%Y")
 
-    affirmation = await generate_ai_affirmation(
-        date_str,
-        life_number,
-        today.strftime("%d.%m.%Y"),
-        period="day"
-    )
+    await m.answer("✨ Создаю вашу карту дня...")
 
-    affirmation_text = f"""
-🔄 *Ваша персональная аффирмация* 🔄
+    prompt = f"""
+Создай персональную карту дня для человека.
 
-✨ {affirmation} ✨
+Данные:
+- Дата рождения: {date_str}
+- Знак зодиака: {zodiac_name} (стихия: {zodiac_element})
+- Число жизненного пути: {life_number}
+- Дата: {today}
 
-*Почему эта аффирмация для вас:*
-Эта утверждение резонирует с энергией вашего числа жизненного пути ({life_number or '?'}).
+Ответ должен содержать РОВНО три блока:
 
-*Как использовать:*
-1. Повторяйте утром, настраиваясь на день
-2. Запишите в дневник или на стикер
-3. Используйте как мантру в течение дня
-4. Визуализируйте, как это проявляется в вашей жизни
+1. АФФИРМАЦИЯ
+Одно предложение от первого лица ("я"), не более 20 слов.
+Должна отражать сильные стороны знака зодиака и числа пути.
 
-*Энергия на сегодня:*
-Каждый день приносит новые возможности. Эта аффирмация поможет вам привлечь позитивные вибрации и оставаться в потоке.
+2. ПРОГНОЗ ДНЯ
+3-4 предложения. Конкретный прогноз на сегодня: что ожидать, на что обратить внимание.
+Учитывай характеристики знака зодиака и энергию числа пути.
 
-🌟 *Число дня:* {random.randint(1, 9)} (символизирует энергию сегодняшнего дня)
+3. СОВЕТ ДНЯ
+Одна конкретная практическая рекомендация на сегодня.
+
+ЗАПРЕЩЕНО: «вселенная», «карма», «потоки энергии», общие мотивационные фразы, клише.
 """
 
-    await safe_reply(m, affirmation_text, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, "affirmation_generated", {"date": date_str})
+    response = await ask_groq(prompt, "daily_card")
+
+    final_text = f"""
+✨ *Ваша карта дня* ✨
+*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
+
+{response}
+
+📅 *{today}*
+"""
+    await safe_reply(m, final_text, reply_markup=main_menu(user_id))
+    await PersonalizationEngine.update_user_profile(user_id, "daily_card_generated", {"date": date_str}, birth_date=date_str)
 
 # =====================
 # FASTAPI ROUTES
@@ -1681,7 +1708,7 @@ async def admin_panel(request: Request, _: bool = Depends(verify_admin)):
     return f"""
     <html>
     <head>
-        <title>Админ-панель нумеробота (FastAPI)</title>
+        <title>Админ-панель астро-нумеробота (FastAPI)</title>
         <style>
             body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
             .container {{ max-width: 1200px; margin: 0 auto; }}
@@ -1702,7 +1729,7 @@ async def admin_panel(request: Request, _: bool = Depends(verify_admin)):
     <body>
         <div class="container">
             <div class="header">
-                <h1>🤖 Админ-панель нумеробота (FastAPI)</h1>
+                <h1>🤖 Админ-панель астро-нумеробота (FastAPI)</h1>
                 <p>Версия 2.0 | {datetime.now().strftime("%d.%m.%Y %H:%M")}</p>
             </div>
 
@@ -1864,18 +1891,18 @@ if __name__ == "__main__":
     if not BASE_URL:
         logger.warning("WARNING: BASE_URL is not set! Webhook may not work properly.")
 
-    logger.info("✨ Нумерологический бот запущен!")
+    logger.info("✨ Астро-нумерологический бот запущен!")
     logger.info(f"🌐 API Documentation: {BASE_URL}/api/docs")
     logger.info(f"🔧 Admin panel: {BASE_URL}{ADMIN_PATH}")
     logger.info(f"👑 Admin ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Не задан'}")
     logger.info(f"🚀 Server running on port: {PORT}")
     logger.info("="*50)
     logger.info("🎯 Уникальные фичи включены:")
-    logger.info("• Нумерологический портрет с AI")
-    logger.info("• Совместимость по типам отношений")
-    logger.info("• Прогнозы на разные периоды")
-    logger.info("• Персональные гороскопы")
-    logger.info("• Аффирмации дня")
+    logger.info("• Комбинированный профиль (астрология + нумерология)")
+    logger.info("• Глубокий нумерологический портрет с AI")
+    logger.info("• Персональные гороскопы по знаку зодиака")
+    logger.info("• Совместимость по знакам и числам")
+    logger.info("• Карта дня с аффирмацией")
     logger.info("• Система персонализации")
     logger.info("="*50)
 
