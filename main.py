@@ -1396,14 +1396,14 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
     if h_type == "today":
         target_date = today
-        date_description = f"{today.strftime('%d.%m.%Y')} (сегодня)"
+        date_description = today.strftime('%d.%m.%Y')
     elif h_type == "tomorrow":
         target_date = today + timedelta(days=1)
-        date_description = f"{target_date.strftime('%d.%m.%Y')} (завтра)"
+        date_description = target_date.strftime('%d.%m.%Y')
     elif h_type == "week":
         target_date_start = today
         target_date_end = today + timedelta(days=6)
-        date_description = f"с {target_date_start.strftime('%d.%m.%Y')} по {target_date_end.strftime('%d.%m.%Y')} (на неделю)"
+        date_description = f"{target_date_start.strftime('%d.%m.%Y')} – {target_date_end.strftime('%d.%m.%Y')}"
     elif h_type == "month":
         year = today.year
         month = today.month
@@ -1412,10 +1412,10 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
             target_date_end = datetime(year + 1, 1, 1) - timedelta(days=1)
         else:
             target_date_end = datetime(year, month + 1, 1) - timedelta(days=1)
-        date_description = f"с {target_date_start.strftime('%d.%m.%Y')} по {target_date_end.strftime('%d.%m.%Y')} (на месяц)"
+        date_description = f"{target_date_start.strftime('%d.%m.%Y')} – {target_date_end.strftime('%d.%m.%Y')}"
     else:
         target_date = today
-        date_description = f"{today.strftime('%d.%m.%Y')} (сегодня)"
+        date_description = today.strftime('%d.%m.%Y')
 
     await m.answer(f"♈ Создаю гороскоп на {period_display}...")
 
@@ -1435,9 +1435,9 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 Создай персональный гороскоп на {period_header} для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'}.
+Число жизненного пути: {life_number if life_number else 'не определено'} (это ПОСТОЯННОЕ число на всю жизнь, рассчитанное из даты рождения — оно НЕ меняется по годам).
 
-Основывай гороскоп на астрологии (характеристики знака, энергия стихии) и дополняй нумерологическими инсайтами (число жизненного пути).
+Основывай гороскоп на астрологии (характеристики знака, энергия стихии) и дополняй нумерологическими наблюдениями.
 
 Требования к стилю:
 - чистый литературный русский
@@ -1481,9 +1481,9 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 Создай персональный гороскоп на неделю ({date_description}) для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'}.
+Число жизненного пути: {life_number if life_number else 'не определено'} (постоянное число на всю жизнь, НЕ меняется по годам).
 
-Основывай гороскоп на астрологии (тенденции знака, энергия стихии) и дополняй нумерологическими инсайтами.
+Основывай гороскоп на астрологии (тенденции знака, энергия стихии) и дополняй нумерологическими наблюдениями.
 
 Стиль:
 - деловой, спокойный, психологически точный
@@ -1518,9 +1518,9 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 Создай персональный гороскоп на месяц ({date_description}) для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'}.
+Число жизненного пути: {life_number if life_number else 'не определено'} (постоянное число на всю жизнь, НЕ меняется по годам).
 
-Основывай гороскоп на астрологии (характеристики знака, стихия) и дополняй нумерологическими инсайтами.
+Основывай гороскоп на астрологии (характеристики знака, стихия) и дополняй нумерологическими наблюдениями.
 
 Стиль:
 - экспертный, спокойный, практичный
