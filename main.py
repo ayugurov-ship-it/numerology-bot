@@ -593,7 +593,7 @@ def main_menu(user_id: int = None):
         [KeyboardButton(text="🔮 Мой профиль")],
         [KeyboardButton(text="♈ Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
         [KeyboardButton(text="💞 Совместимость")],
-        [KeyboardButton(text="🌌 Натальная карта")]
+        [KeyboardButton(text="🌌 Натальная карта"), KeyboardButton(text="✨ Карта дня")]
     ]
 
     if user_id in ADMIN_IDS:
@@ -865,6 +865,22 @@ async def natal_chart_main(m: Message):
         reply_markup=main_menu(user_id)
     )
 
+@router.message(lambda m: m.text == "✨ Карта дня")
+async def daily_card_main(m: Message):
+    user_id = m.from_user.id
+    stored_date = PersonalizationEngine.get_user_birth_date(user_id)
+    if stored_date:
+        await daily_card_handler(m, stored_date)
+    else:
+        await PersonalizationEngine.update_user_profile(user_id, "daily_card_request")
+        await m.answer(
+            "✨ *Карта дня*\n\n"
+            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
+            "В следующий раз я запомню вашу дату!",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
+
 @router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
     user_id = m.from_user.id
@@ -1050,7 +1066,8 @@ async def about_bot(m: Message):
 • Составлять глубокий нумерологический портрет
 • Генерировать персональные гороскопы по знаку зодиака
 • Анализировать совместимость по знакам и числам
-• Составлять натальную карту с транзитами
+• Составлять натальную карту (база на всю жизнь)
+• Создавать карту дня (транзиты планет сегодня)
 
 🔮 *Мой подход:*
 Я сочетаю астрологию (знаки зодиака, стихии) и нумерологию (числа жизненного пути) с современными психологическими знаниями. Все анализы уникальны и создаются специально для вас.
@@ -1085,6 +1102,8 @@ async def date_analysis_handler(m: Message):
         await process_numerology(m, date_str)
     elif last_action == "natal_chart_request":
         await natal_chart_handler(m, date_str, birth_time)
+    elif last_action == "daily_card_request":
+        await daily_card_handler(m, date_str)
     elif last_action in ("profile_request", "portrait_request"):
         await process_profile(m, date_str)
     elif "forecast" in last_action:
@@ -1611,6 +1630,68 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
     await safe_reply(m, final_text, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "natal_chart_generated", {"date": date_str}, birth_date=date_str)
 
+async def daily_card_handler(m: Message, date_str: str):
+    user_id = m.from_user.id
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    zodiac = get_zodiac_sign(date_str)
+    zodiac_name = zodiac["name"] if zodiac else "не определён"
+    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
+    zodiac_element = zodiac["element"] if zodiac else "не определена"
+    today = datetime.now().strftime("%d.%m.%Y")
+
+    await m.answer("✨ Составляю карту дня...")
+
+    storage.stats["daily_cards"] = storage.stats.get("daily_cards", 0) + 1
+    await storage.save_all()
+
+    prompt = f"""
+Составь карту дня — астрологический расклад на СЕГОДНЯ ({today}).
+
+Данные человека:
+- Дата рождения: {date_str}
+- Солнце: {zodiac_name} (стихия: {zodiac_element})
+- Число жизненного пути: {life_number}
+
+Карта дня — это НЕ натальная карта (она составляется один раз на всю жизнь).
+Карта дня — это положение планет СЕГОДНЯ и как они влияют на человека с его натальными данными.
+
+Формат ответа — ТОЛЬКО эмодзи-разделители, БЕЗ текстовых заголовков:
+
+🌅 — Энергия дня: общий настрой сегодняшнего дня, какая планета задаёт тон. 1–2 предложения.
+
+🌙 — Луна сегодня: в каком знаке Луна, фаза Луны, как это влияет на эмоции и интуицию. 2 предложения.
+
+⚡ — Ключевой транзит дня: один главный планетарный аспект сегодня и как он затрагивает {zodiac_name} с числом пути {life_number}. 2–3 предложения.
+
+💼 — На чём держать внимание: работа, дела, решения — конкретно, что делать и чего избегать. 2 предложения.
+
+💬 — Общение и отношения: как строить взаимодействие сегодня. 1–2 предложения.
+
+🎯 — Число дня: рассчитай нумерологическое число сегодняшнего дня ({today}) и объясни, как его использовать.
+
+✨ — Аффирмация дня: одно предложение от первого лица, не более 15 слов.
+
+Объём: 150–200 слов.
+
+ЗАПРЕЩЕНО:
+- текстовые заголовки разделов
+- англицизмы и транслитерации
+- «вселенная», «карма», «потоки»
+- абстрактная философия и общие фразы
+"""
+
+    response = await ask_groq(prompt, "horoscope")
+
+    final_text = f"""
+✨ *Карта дня* ✨
+*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
+*{today}*
+
+{response}
+"""
+    await safe_reply(m, final_text, reply_markup=main_menu(user_id))
+    await PersonalizationEngine.update_user_profile(user_id, "daily_card_generated", {"date": date_str}, birth_date=date_str)
+
 # =====================
 # FASTAPI ROUTES
 # =====================
@@ -1893,7 +1974,8 @@ if __name__ == "__main__":
     logger.info("• Глубокий нумерологический портрет с AI")
     logger.info("• Персональные гороскопы по знаку зодиака")
     logger.info("• Совместимость по знакам и числам")
-    logger.info("• Натальная карта с транзитами")
+    logger.info("• Натальная карта (разовая база)")
+    logger.info("• Карта дня (ежедневные транзиты)")
     logger.info("• Система персонализации")
     logger.info("="*50)
 
