@@ -294,36 +294,46 @@ dp.include_router(router)
 # CONSTANTS
 # =====================
 
+_LANG_RULE = (
+    "Язык: ТОЛЬКО чистый литературный русский. "
+    "СТРОГО ЗАПРЕЩЕНЫ любые англицизмы и транслитерации: "
+    "инсайт, фидбек, майндсет, скилл, лайфхак, тренд, паттерн, "
+    "триггер, коучинг, бэкграунд, челлендж, фокус и т.п. "
+    "Используй русские аналоги: озарение, отклик, склад ума, "
+    "навык, подсказка, тенденция, закономерность, сосредоточенность."
+)
+
 GROQ_SYSTEM_PROMPTS = {
-    "default": """Ты — профессиональный астро-нумеролог с 20-летним опытом.
+    "default": f"""Ты — профессиональный астро-нумеролог с 20-летним опытом.
 Ты сочетаешь астрологию (знаки зодиака, стихии) и нумерологию (числа жизненного пути).
 Пиши дружелюбно, уверенно, без мистического фанатизма.
-Язык: чистый литературный русский. Не упоминай, что ты ИИ.""",
+{_LANG_RULE} Не упоминай, что ты ИИ.""",
 
-    "profile": """Ты — эксперт по астрологии и нумерологии, создающий комбинированные портреты личности.
+    "profile": f"""Ты — эксперт по астрологии и нумерологии, создающий комбинированные портреты личности.
 Ты анализируешь знак зодиака (характеристики знака, стихию) и число жизненного пути одновременно,
 показывая как они дополняют друг друга и где создают интересные контрасты.
-Тон: уверенный, экспертный, без мистики. Язык: русский.""",
+Тон: уверенный, экспертный, без мистики. {_LANG_RULE}""",
 
-    "detailed": """Ты — глубокий эксперт по нумерологии и психологии личности.
-Анализируй числа даты рождения, давая глубокие персонализированные инсайты.
+    "detailed": f"""Ты — глубокий эксперт по нумерологии и психологии личности.
+Анализируй числа даты рождения, давая глубокие персонализированные наблюдения.
 Можешь кратко упомянуть знак зодиака как дополнительный контекст.
-Будь точным, но вдохновляющим. Язык: русский.""",
+Будь точным, но вдохновляющим. {_LANG_RULE}""",
 
-    "compatibility": """Ты — специалист по отношениям, совместимости и астро-нумерологии.
+    "compatibility": f"""Ты — специалист по отношениям, совместимости и астро-нумерологии.
 Анализируй совместимость пар по двум системам: зодиакальная совместимость (знаки, стихии)
 и нумерологическая совместимость (числа жизненного пути).
-Будь дипломатичным, подчеркивай сильные стороны пары. Язык: русский.""",
+Будь дипломатичным, подчеркивай сильные стороны пары. {_LANG_RULE}""",
 
-    "horoscope": """Ты — профессиональный астролог с глубоким знанием нумерологии.
+    "horoscope": f"""Ты — профессиональный астролог с глубоким знанием нумерологии.
 Создавай персонализированные гороскопы, основываясь на знаке зодиака и его стихии,
-дополняя нумерологическими инсайтами (число жизненного пути).
-Тон: уверенный, конкретный, без общих фраз. Язык: русский.""",
+дополняя нумерологическими наблюдениями (число жизненного пути).
+Тон: уверенный, конкретный, без общих фраз. {_LANG_RULE}""",
 
-    "daily_card": """Ты — персональный астро-нумеролог, создающий карты дня.
-Ты формируешь карту дня из трёх компонентов: аффирмация, краткий прогноз, практический совет.
-Учитывай знак зодиака и число жизненного пути. Будь конкретным и практичным.
-Без эзотерики, без «вселенная/карма/потоки». Язык: русский."""
+    "natal": f"""Ты — профессиональный астролог, владеющий натальной астрологией, транзитами и нумерологией.
+Ты составляешь натальные карты и интерпретируешь положения планет по знакам и домам.
+Тон: прямой, без воды, с конкретикой. Не «вам повезёт в любви», а точные указания
+на энергии планет, аспекты и их проявления в жизни.
+Без эзотерических клише. {_LANG_RULE}"""
 }
 
 # =====================
@@ -583,7 +593,7 @@ def main_menu(user_id: int = None):
         [KeyboardButton(text="🔮 Мой профиль")],
         [KeyboardButton(text="♈ Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
         [KeyboardButton(text="💞 Совместимость")],
-        [KeyboardButton(text="✨ Карта дня")]
+        [KeyboardButton(text="🌌 Натальная карта")]
     ]
 
     if user_id in ADMIN_IDS:
@@ -627,11 +637,30 @@ def horoscope_type_menu():
 # =====================
 
 def is_date(text: str) -> bool:
-    try:
-        DateModel(date_str=text)
-        return True
-    except:
+    if not text:
         return False
+    # Поддержка "DD.MM.YYYY" и "DD.MM.YYYY HH:MM"
+    date_part = text.strip().split()[0]
+    try:
+        DateModel(date_str=date_part)
+        return True
+    except Exception:
+        return False
+
+def parse_date_input(text: str) -> tuple:
+    """Разбирает ввод пользователя на дату и необязательное время.
+    Возвращает (date_str, birth_time_str | None)."""
+    parts = text.strip().split()
+    date_str = parts[0]
+    birth_time = None
+    if len(parts) >= 2:
+        time_part = parts[1]
+        try:
+            datetime.strptime(time_part, "%H:%M")
+            birth_time = time_part
+        except ValueError:
+            pass
+    return date_str, birth_time
 
 def format_user_name(user: types.User) -> str:
     name_parts = []
@@ -821,21 +850,20 @@ async def numerology_main(m: Message):
         reply_markup=main_menu(user_id)
     )
 
-@router.message(lambda m: m.text == "✨ Карта дня")
-async def daily_card_main(m: Message):
+@router.message(lambda m: m.text == "🌌 Натальная карта")
+async def natal_chart_main(m: Message):
     user_id = m.from_user.id
-    stored_date = PersonalizationEngine.get_user_birth_date(user_id)
-    if stored_date:
-        await daily_card_handler(m, stored_date)
-    else:
-        await PersonalizationEngine.update_user_profile(user_id, "daily_card_request")
-        await m.answer(
-            "✨ *Карта дня*\n\n"
-            "Введите вашу дату рождения в формате ДД.ММ.ГГГГ\n\n"
-            "В следующий раз я запомню вашу дату!",
-            parse_mode="Markdown",
-            reply_markup=main_menu(user_id)
-        )
+    await PersonalizationEngine.update_user_profile(user_id, "natal_chart_request")
+    await m.answer(
+        "🌌 *Натальная карта*\n\n"
+        "Введите дату рождения и (по желанию) время рождения:\n\n"
+        "• Только дата: `10.05.1985`\n"
+        "• Дата и время: `10.05.1985 14:30`\n\n"
+        "Время рождения позволит определить Асцендент и дома — "
+        "карта будет точнее.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
 
 @router.message(lambda m: m.text == "👑 Админ-панель")
 async def admin_button_handler(m: Message):
@@ -1022,7 +1050,7 @@ async def about_bot(m: Message):
 • Составлять глубокий нумерологический портрет
 • Генерировать персональные гороскопы по знаку зодиака
 • Анализировать совместимость по знакам и числам
-• Создавать карту дня с аффирмацией и прогнозом
+• Составлять натальную карту с транзитами
 
 🔮 *Мой подход:*
 Я сочетаю астрологию (знаки зодиака, стихии) и нумерологию (числа жизненного пути) с современными психологическими знаниями. Все анализы уникальны и создаются специально для вас.
@@ -1045,7 +1073,7 @@ async def about_bot(m: Message):
 @router.message(lambda m: is_date(m.text))
 async def date_analysis_handler(m: Message):
     user_id = m.from_user.id
-    date_str = m.text
+    date_str, birth_time = parse_date_input(m.text)
     user_history = storage.personalization["user_history"].get(str(user_id), {"actions": []})
     if not user_history["actions"]:
         await process_profile(m, date_str)
@@ -1055,8 +1083,8 @@ async def date_analysis_handler(m: Message):
         await horoscope_handler(m, date_str, last_action)
     elif last_action == "numerology_request":
         await process_numerology(m, date_str)
-    elif last_action == "daily_card_request":
-        await daily_card_handler(m, date_str)
+    elif last_action == "natal_chart_request":
+        await natal_chart_handler(m, date_str, birth_time)
     elif last_action in ("profile_request", "portrait_request"):
         await process_profile(m, date_str)
     elif "forecast" in last_action:
@@ -1516,7 +1544,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{h_type}", {"date": date_str, "period": h_type}, birth_date=date_str)
 
-async def daily_card_handler(m: Message, date_str: str):
+async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None):
     user_id = m.from_user.id
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
     zodiac = get_zodiac_sign(date_str)
@@ -1525,45 +1553,63 @@ async def daily_card_handler(m: Message, date_str: str):
     zodiac_element = zodiac["element"] if zodiac else "не определена"
     today = datetime.now().strftime("%d.%m.%Y")
 
-    await m.answer("✨ Создаю вашу карту дня...")
+    time_info = f"Время рождения: {birth_time}" if birth_time else "Время рождения: не указано (Асцендент и дома определить невозможно)"
+    await m.answer("🌌 Составляю вашу натальную карту...")
 
     prompt = f"""
-Создай персональную карту дня для человека.
+Составь натальную карту для человека.
 
 Данные:
 - Дата рождения: {date_str}
-- Знак зодиака: {zodiac_name} (стихия: {zodiac_element})
+- {time_info}
+- Знак зодиака (Солнце): {zodiac_name} (стихия: {zodiac_element})
 - Число жизненного пути: {life_number}
-- Дата: {today}
+- Текущая дата: {today}
 
-Ответ должен содержать РОВНО три блока:
+Формат ответа — используй ТОЛЬКО эмодзи-разделители, БЕЗ текстовых заголовков:
 
-1. АФФИРМАЦИЯ
-Одно предложение от первого лица ("я"), не более 20 слов.
-Должна отражать сильные стороны знака зодиака и числа пути.
+☀️ — Солнце в {zodiac_name}: ключевые черты характера, жизненная цель, способ самовыражения. 2–3 предложения.
 
-2. ПРОГНОЗ ДНЯ
-3-4 предложения. Конкретный прогноз на сегодня: что ожидать, на что обратить внимание.
-Учитывай характеристики знака зодиака и энергию числа пути.
+🌙 — Луна (определи вероятный знак по дате): эмоциональная природа, потребности, реакции. 2–3 предложения.
 
-3. СОВЕТ ДНЯ
-Одна конкретная практическая рекомендация на сегодня.
+{"🔺 — Асцендент (определи по времени рождения " + birth_time + "): внешнее поведение, первое впечатление, физическая конституция. 2–3 предложения." if birth_time else ""}
 
-ЗАПРЕЩЕНО: «вселенная», «карма», «потоки энергии», общие мотивационные фразы, клише.
+♀️♂️ — Венера и Марс: стиль в любви, сексуальность, способ достижения целей. 2–3 предложения.
+
+🪐 — Сатурн и Юпитер: главные жизненные уроки и зоны роста. 2–3 предложения.
+
+🔗 — Лунные узлы (Раху/Кету): кармическая задача, откуда идёт и куда движется. 2–3 предложения.
+
+📐 — Ключевые аспекты: 2–3 самых важных аспекта в карте и их проявление в жизни.
+
+🔢 — Нумерологический слой: число жизненного пути {life_number}, как оно усиливает или корректирует астрологическую картину.
+
+🔄 — Текущие транзиты: 1–2 актуальных транзита на {today} и их влияние именно на эту карту.
+
+Стиль: прямой, конкретный, без воды. Не «вам повезёт», а точные указания на энергии планет и их проявления.
+
+ЗАПРЕЩЕНО:
+- текстовые заголовки разделов
+- англицизмы и транслитерации (инсайт, паттерн, триггер и т.п.)
+- «вселенная», «карма», «потоки»
+- абстрактная философия
+
+Объём: 300–400 слов.
 """
 
-    response = await ask_groq(prompt, "daily_card")
+    response = await ask_groq(prompt, "natal")
 
     final_text = f"""
-✨ *Ваша карта дня* ✨
+🌌 *Ваша натальная карта* 🌌
 *{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
+{"*Время рождения: " + birth_time + "*" if birth_time else ""}
 
 {response}
 
-📅 *{today}*
+📅 *Дата составления:* {today}
 """
     await safe_reply(m, final_text, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, "daily_card_generated", {"date": date_str}, birth_date=date_str)
+    await PersonalizationEngine.update_user_profile(user_id, "natal_chart_generated", {"date": date_str}, birth_date=date_str)
 
 # =====================
 # FASTAPI ROUTES
@@ -1847,7 +1893,7 @@ if __name__ == "__main__":
     logger.info("• Глубокий нумерологический портрет с AI")
     logger.info("• Персональные гороскопы по знаку зодиака")
     logger.info("• Совместимость по знакам и числам")
-    logger.info("• Карта дня с аффирмацией")
+    logger.info("• Натальная карта с транзитами")
     logger.info("• Система персонализации")
     logger.info("="*50)
 
