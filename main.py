@@ -52,7 +52,7 @@ BASE_URL = os.getenv("BASE_URL", "https://your-domain.com")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "260219938").split(",")))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "your-admin-token")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your-secret-token")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))  # секунд, по умолчанию 10 мин
 WEBHOOK_PATH = "/webhook"
 ADMIN_PATH = "/admin"
@@ -517,7 +517,7 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.6,
-        "max_tokens": 1500
+        "max_completion_tokens": 1500
     }
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
