@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix: stabilize Groq AI responses'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -54,7 +53,8 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
         ],
         "temperature": 0.6,
         "max_completion_tokens": 1500,
-        "reasoning_effort": "low"
+        "reasoning_effort": "low",
+        "include_reasoning": false
     }
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
