@@ -6,15 +6,10 @@ ROOT = Path(__file__).resolve().parent
 MAIN = ROOT / "main.py"
 MARKER = "# === INLINE BIRTH DATE CALENDAR ==="
 
+MONTHS_RU = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
-def patch_main():
-    source = MAIN.read_text(encoding="utf-8")
-    if MARKER in source:
-        return
-
-    source = source.replace("import json\n", "import json\nimport calendar\n", 1)
-
-    calendar_block = r'''
+CALENDAR_BLOCK = r'''
 
 # === INLINE BIRTH DATE CALENDAR ===
 MONTHS_RU = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
@@ -22,7 +17,9 @@ WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
 def birth_years_keyboard(start=1920):
-    rows = [[InlineKeyboardButton(text=f"{y}–{y+9}", callback_data=f"birth_decade:{y}")] for y in range(start, start + 100, 10)]
+    rows = []
+    for y in range(start, start + 100, 10):
+        rows.append([InlineKeyboardButton(text=f"{y}–{y+9}", callback_data=f"birth_decade:{y}")])
     rows.append([
         InlineKeyboardButton(text="◀️ Старше", callback_data=f"birth_year_page:{start-100}"),
         InlineKeyboardButton(text="Младше ▶️", callback_data=f"birth_year_page:{start+100}")
@@ -68,7 +65,9 @@ def birth_calendar_keyboard(year, month):
 
 async def show_birth_date_picker(message: Message):
     await message.answer(
-        "📅 *Выберите дату рождения*\n\nСначала выберите год, затем месяц и день.\nНичего вводить вручную не нужно.",
+        "📅 *Выберите дату рождения*\n\n"
+        "Сначала выберите год, затем месяц и день.\n"
+        "Ничего вводить вручную не нужно.",
         parse_mode="Markdown",
         reply_markup=birth_years_keyboard()
     )
@@ -140,19 +139,20 @@ async def birth_date(callback: types.CallbackQuery):
 
 @router.message(lambda m: m.text == "📅 Изменить дату")
 async def change_birth_date(m: Message):
+    await PersonalizationEngine.update_user_profile(m.from_user.id, "change_birth_date")
     await show_birth_date_picker(m)
 '''
 
-    source = source.replace("def horoscope_type_menu():", calendar_block + "\ndef horoscope_type_menu():", 1)
-
-    profile = r'''@router.message(lambda m: m.text == "🔮 Мой профиль")
+PROFILE = r'''@router.message(lambda m: m.text == "🔮 Мой профиль")
 async def profile_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "profile_request")
     stored_date = PersonalizationEngine.get_user_birth_date(user_id)
     if stored_date:
         await m.answer(
-            f"🔮 *{format_user_name(m.from_user)}, ваш профиль*\n\nЯ помню вашу дату рождения: *{stored_date}*.\n\nСразу формирую ваш профиль.",
+            f"🔮 *{format_user_name(m.from_user)}, ваш профиль*\n\n"
+            f"Я помню вашу дату рождения: *{stored_date}*.\n\n"
+            "Сразу формирую ваш профиль.",
             parse_mode="Markdown",
             reply_markup=main_menu(user_id)
         )
@@ -161,11 +161,8 @@ async def profile_main(m: Message):
         await show_birth_date_picker(m)
 
 @router.message(lambda m: m.text == "💞 Совместимость")'''
-    source, n = re.subn(r'@router\.message\(lambda m: m\.text == "🔮 Мой профиль"\).*?@router\.message\(lambda m: m\.text == "💞 Совместимость"\)', profile, source, count=1, flags=re.S)
-    if n != 1:
-        raise RuntimeError("profile handler not found")
 
-    numerology = r'''@router.message(lambda m: m.text == "🔢 Нумерология")
+NUMEROLOGY = r'''@router.message(lambda m: m.text == "🔢 Нумерология")
 async def numerology_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "numerology_request")
@@ -176,26 +173,8 @@ async def numerology_main(m: Message):
         await show_birth_date_picker(m)
 
 @router.message(lambda m: m.text == "🌌 Натальная карта")'''
-    source, n = re.subn(r'@router\.message\(lambda m: m\.text == "🔢 Нумерология"\).*?@router\.message\(lambda m: m\.text == "🌌 Натальная карта"\)', numerology, source, count=1, flags=re.S)
-    if n != 1:
-        raise RuntimeError("numerology handler not found")
 
-    daily = r'''@router.message(lambda m: m.text == "✨ Карта дня")
-async def daily_card_main(m: Message):
-    user_id = m.from_user.id
-    stored_date = PersonalizationEngine.get_user_birth_date(user_id)
-    if stored_date:
-        await daily_card_handler(m, stored_date)
-    else:
-        await PersonalizationEngine.update_user_profile(user_id, "daily_card_request")
-        await show_birth_date_picker(m)
-
-@router.message(lambda m: m.text == "👑 Админ-панель")'''
-    source, n = re.subn(r'@router\.message\(lambda m: m\.text == "✨ Карта дня"\).*?@router\.message\(lambda m: m\.text == "👑 Админ-панель"\)', daily, source, count=1, flags=re.S)
-    if n != 1:
-        raise RuntimeError("daily card handler not found")
-
-    natal = r'''@router.message(lambda m: m.text == "🌌 Натальная карта")
+NATAL = r'''@router.message(lambda m: m.text == "🌌 Натальная карта")
 async def natal_chart_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "natal_chart_request")
@@ -206,12 +185,20 @@ async def natal_chart_main(m: Message):
         await show_birth_date_picker(m)
 
 @router.message(lambda m: m.text == "✨ Карта дня")'''
-    source, n = re.subn(r'@router\.message\(lambda m: m\.text == "🌌 Натальная карта"\).*?@router\.message\(lambda m: m\.text == "✨ Карта дня"\)', natal, source, count=1, flags=re.S)
-    if n != 1:
-        raise RuntimeError("natal handler not found")
 
-    # Replace horoscope callback so it uses the saved date or opens the calendar.
-    horoscope = r'''@router.callback_query(lambda c: c.data.startswith("horoscope_"))
+DAILY = r'''@router.message(lambda m: m.text == "✨ Карта дня")
+async def daily_card_main(m: Message):
+    user_id = m.from_user.id
+    stored_date = PersonalizationEngine.get_user_birth_date(user_id)
+    if stored_date:
+        await daily_card_handler(m, stored_date)
+    else:
+        await PersonalizationEngine.update_user_profile(user_id, "daily_card_request")
+        await show_birth_date_picker(m)
+
+@router.message(lambda m: m.text == "👑 Админ-панель")'''
+
+HOROSCOPE = r'''@router.callback_query(lambda c: c.data.startswith("horoscope_"))
 async def process_horoscope_type(callback: types.CallbackQuery):
     h_type = callback.data.split("_")[1]
     action = f"horoscope_{h_type}"
@@ -221,17 +208,73 @@ async def process_horoscope_type(callback: types.CallbackQuery):
     if stored_date:
         await horoscope_handler(callback.message, stored_date, action)
     else:
-        await callback.message.edit_text("📅 *Выберите дату рождения*\n\nВручную ничего вводить не нужно.", parse_mode="Markdown", reply_markup=birth_years_keyboard())
+        await callback.message.edit_text(
+            "📅 *Выберите дату рождения*\n\nВручную ничего вводить не нужно.",
+            parse_mode="Markdown",
+            reply_markup=birth_years_keyboard()
+        )
 
 @router.message(lambda m: m.text == "🔢 Нумерология")'''
-    source, n = re.subn(r'@router\.callback_query\(lambda c: c\.data\.startswith\("horoscope_"\)\).*?@router\.message\(lambda m: m\.text == "🔢 Нумерология"\)', horoscope, source, count=1, flags=re.S)
-    if n != 1:
-        raise RuntimeError("horoscope callback not found")
 
-    # Add the date-change button.
-    source = source.replace('[KeyboardButton(text="💞 Совместимость")],', '[KeyboardButton(text="💞 Совместимость")],\n        [KeyboardButton(text="📅 Изменить дату")],', 1)
 
-    # Friendly returning-user greeting by Telegram first name.
+def replace_once(source, pattern, replacement, label):
+    result, count = re.subn(pattern, lambda _m: replacement, source, count=1, flags=re.S)
+    if count != 1:
+        raise RuntimeError(f"{label} not found")
+    return result
+
+
+def patch_main():
+    source = MAIN.read_text(encoding="utf-8")
+    if MARKER in source:
+        py_compile.compile(str(MAIN), doraise=True)
+        return
+
+    if "import calendar\n" not in source:
+        source = source.replace("import json\n", "import json\nimport calendar\n", 1)
+
+    if "def horoscope_type_menu():" not in source:
+        raise RuntimeError("horoscope_type_menu marker not found")
+    source = source.replace("def horoscope_type_menu():", CALENDAR_BLOCK + "\ndef horoscope_type_menu():", 1)
+
+    source = replace_once(
+        source,
+        r'@router\.message\(lambda m: m\.text == "🔮 Мой профиль"\).*?@router\.message\(lambda m: m\.text == "💞 Совместимость"\)',
+        PROFILE,
+        "profile handler"
+    )
+    source = replace_once(
+        source,
+        r'@router\.callback_query\(lambda c: c\.data\.startswith\("horoscope_"\)\).*?@router\.message\(lambda m: m\.text == "🔢 Нумерология"\)',
+        HOROSCOPE,
+        "horoscope handler"
+    )
+    source = replace_once(
+        source,
+        r'@router\.message\(lambda m: m\.text == "🔢 Нумерология"\).*?@router\.message\(lambda m: m\.text == "🌌 Натальная карта"\)',
+        NUMEROLOGY,
+        "numerology handler"
+    )
+    source = replace_once(
+        source,
+        r'@router\.message\(lambda m: m\.text == "🌌 Натальная карта"\).*?@router\.message\(lambda m: m\.text == "✨ Карта дня"\)',
+        NATAL,
+        "natal handler"
+    )
+    source = replace_once(
+        source,
+        r'@router\.message\(lambda m: m\.text == "✨ Карта дня"\).*?@router\.message\(lambda m: m\.text == "👑 Админ-панель"\)',
+        DAILY,
+        "daily card handler"
+    )
+
+    if '[KeyboardButton(text="📅 Изменить дату")]' not in source:
+        source = source.replace(
+            '[KeyboardButton(text="💞 Совместимость")],',
+            '[KeyboardButton(text="💞 Совместимость")],\n        [KeyboardButton(text="📅 Изменить дату")],',
+            1
+        )
+
     returning = r'''    stored_birth_date = PersonalizationEngine.get_user_birth_date(user_id)
     if not is_new_user and stored_birth_date:
         await m.answer(
@@ -243,7 +286,8 @@ async def process_horoscope_type(callback: types.CallbackQuery):
         return
 
 '''
-    source = source.replace('    welcome_messages = [', returning + '    welcome_messages = [', 1)
+    if "stored_birth_date = PersonalizationEngine.get_user_birth_date(user_id)" not in source:
+        source = source.replace("    welcome_messages = [", returning + "    welcome_messages = [", 1)
 
     MAIN.write_text(source, encoding="utf-8")
     py_compile.compile(str(MAIN), doraise=True)
@@ -255,4 +299,4 @@ except Exception as exc:
     raise RuntimeError(f"Calendar UX patch failed: {exc}") from exc
 
 from setuptools import setup
-setup(name="numerology-bot-build-hook", version="0.0.0")
+setup(name="numerology-bot-build-hook", version="0.0.1")
