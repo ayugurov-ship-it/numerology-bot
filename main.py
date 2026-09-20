@@ -2025,22 +2025,10 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
 Объём: 250–350 слов.
 """
 
-    try:
-        response = await generate_verified_report(
-            prompt=prompt,
-            chart=chart,
-            birth_time_known=time_known,
-            ask_groq=ask_groq,
-            max_repairs=2,
-        )
-    except Exception as exc:
-        logger.exception("[NATAL_REPORT] FINAL QA FAILURE: %s", exc)
-        await message.answer(
-            "Не удалось получить отчёт, прошедший контроль качества. "
-            "Непроверенный текст пользователю не отправляю.",
-            reply_markup=main_menu(user_id),
-        )
-        return
+    # Это короткий натальный портрет по дате рождения, а не полная натальная карта.
+    # Для него нет объекта chart: проверка полной карты выполняется отдельно
+    # в generate_full_natal_chart через оркестратор и QA-агентов.
+    response = await ask_groq(prompt, "natal")
 
     final_text = f"""
 🌌 *Ваш натальный портрет* 🌌
