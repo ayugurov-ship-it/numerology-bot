@@ -71,16 +71,18 @@ def validate_report_text(text: str, chart: dict[str, Any], birth_time_known: boo
 
     moon = planets.get("Луна", {})
     if moon.get("time_uncertainty") and len(moon.get("possible_signs", [])) > 1:
-        # A definite standalone "Луна в X" is unsafe; uncertainty must remain explicit.
-        for sign in moon["possible_signs"]:
-            if re.search(rf"\bлуна\b[^.\n]{{0,30}}\b{re.escape(sign.lower())}\b", low):
-                context_ok = re.search(
-                    rf"\bлуна\b[^.\n]{{0,80}}(?:возможн|неопредел|может|или)\w*[^.\n]{{0,80}}\b{re.escape(sign.lower())}\b",
-                    low,
-                )
-                if not context_ok:
-                    errors.append(f"Луна указана как точное положение в {sign}, хотя время неизвестно.")
-                    break
+        possible = [s.lower() for s in moon["possible_signs"]]
+        both_signs_present = all(re.search(rf"\b{re.escape(sign)}\b", low) for sign in possible)
+        uncertainty_near_moon = re.search(
+            r"луна[^.\n]{0,220}(?:возможн|неопредел|может|или)",
+            low,
+        )
+        if both_signs_present and not uncertainty_near_moon:
+            errors.append(
+                "Луна трактуется как однозначная, хотя без времени рождения возможны "
+                + " и ".join(moon["possible_signs"]) + "."
+            )
+
 
     # The report must not claim houses if the engine returned none.
     if not chart.get("houses") and re.search(r"\b(?:\d{1,2}|1[0-2])-й\s+дом\b", low):
