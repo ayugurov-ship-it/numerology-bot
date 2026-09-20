@@ -231,12 +231,18 @@ async def resolve_location(place: str) -> dict[str, Any]:
 
     variants = _variants(place)
     candidates: list[LocationCandidate] = []
+    service_errors = 0
     timeout = aiohttp.ClientTimeout(total=8, connect=3, sock_read=6)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         # Не бомбим публичный Nominatim параллельными запросами.
         for query in variants:
-            results = await _nominatim(session, query)
+            try:
+                results = await _nominatim(session, query)
+            except LocationServiceError as exc:
+                service_errors += 1
+                logger.warning("Nominatim error for %r: %s", query, exc)
+                continue
             for item in results:
                 c = _candidate(query, item, "nominatim")
                 if c:
@@ -249,7 +255,12 @@ async def resolve_location(place: str) -> dict[str, Any]:
         best = max(candidates, key=lambda c: c.score, default=None)
         if best is None or best.score < 0.68:
             for query in variants[:2]:
-                results = await _photon(session, query)
+                try:
+                    results = await _photon(session, query)
+                except LocationServiceError as exc:
+                    service_errors += 1
+                    logger.warning("Photon error for %r: %s", query, exc)
+                    continue
                 for item in results:
                     c = _candidate(query, item, "photon")
                     if c:
@@ -258,6 +269,10 @@ async def resolve_location(place: str) -> dict[str, Any]:
                     break
 
     if not candidates:
+        if service_errors:
+            raise LocationServiceError(
+                "Геокодеры временно недоступны или не ответили вовремя."
+            )
         raise LocationNotFoundError("Не удалось определить координаты этого места.")
 
     # Дедупликация по координатам.
