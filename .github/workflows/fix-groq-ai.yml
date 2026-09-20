@@ -15,88 +15,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Patch Groq client
+      - name: Add GPT-OSS reasoning settings
         shell: python
         run: |
           from pathlib import Path
           import py_compile
-          import re
 
           p = Path("main.py")
           s = p.read_text(encoding="utf-8")
 
-          s = s.replace(
-              'MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")',
-              'MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")'
-          )
-          s = s.replace('"max_tokens": 1500', '"max_completion_tokens": 1500')
+          old = '        "max_completion_tokens": 1500\n    }'
+          new = '        "max_completion_tokens": 1500,\n        "reasoning_effort": "low",\n        "include_reasoning": False\n    }'
 
-          start = s.find('async def _ask_groq_request')
-          end = s.find('\nasync def generate_ai_affirmation', start)
+          if '"reasoning_effort": "low"' not in s:
+              if old not in s:
+                  raise RuntimeError("Could not find Groq data block")
+              s = s.replace(old, new, 1)
 
-          if start == -1 or end == -1:
-              raise RuntimeError(f"Could not locate Groq function: start={start}, end={end}")
-
-          new_func = '''async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> str:
-    url = "https://api.groq.com/openai/v1/chat/completions"
-
-    if not GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": GROQ_SYSTEM_PROMPTS.get(system_prompt_key, GROQ_SYSTEM_PROMPTS["default"])},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.6,
-        "max_completion_tokens": 1500,
-        "reasoning_effort": "low",
-        "include_reasoning": False
-    }
-
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
-        async with session.post(url, headers=headers, json=data) as resp:
-            response_text = await resp.text()
-
-            if resp.status != 200:
-                logger.error("GROQ API ERROR status=%s model=%s body=%s", resp.status, MODEL_NAME, response_text[:1000])
-                raise RuntimeError(f"Groq API HTTP {resp.status}")
-
-            try:
-                result = json.loads(response_text)
-                message = result["choices"][0]["message"]
-                content = message.get("content") or ""
-            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-                logger.error("GROQ API INVALID RESPONSE model=%s body=%s", MODEL_NAME, response_text[:1000])
-                raise RuntimeError("Invalid Groq response") from exc
-
-            content = content.strip()
-            if not content:
-                logger.error("GROQ API EMPTY CONTENT model=%s body=%s", MODEL_NAME, response_text[:2000])
-                raise RuntimeError("Groq returned empty content")
-
-            logger.info("GROQ OK model=%s chars=%s", MODEL_NAME, len(content))
-            return content
-
-
-async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
-    try:
-        return await _ask_groq_request(prompt, system_prompt_key)
-    except Exception as e:
-        logger.error("GROQ ERROR model=%s: %s", MODEL_NAME, e, exc_info=True)
-        return "⚠️ Не удалось получить ответ от AI. Попробуйте ещё раз через несколько секунд."
-'''
-
-          s = s[:start] + new_func + s[end:]
           p.write_text(s, encoding="utf-8")
           py_compile.compile(str(p), doraise=True)
-          print("Groq client patched successfully")
+          print("GPT-OSS reasoning settings applied")
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
@@ -105,6 +44,6 @@ async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "fix: handle empty Groq responses"
+            git commit -m "fix: configure GPT-OSS reasoning"
             git push
           fi
