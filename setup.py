@@ -69,6 +69,27 @@ def patch_groq():
     print("Groq patch applied: max_completion_tokens=4096, reasoning_effort=low")
 
 
+def patch_natal_place_message():
+    source = MAIN.read_text(encoding="utf-8")
+
+    old = '''        f"🧭 Координаты: {geo['latitude']:.4f}, {geo['longitude']:.4f}\\n\\n"
+        ("После оплаты будут рассчитаны планеты, аспекты и персональная расшифровка. "
+'''
+
+    new = '''        f"🧭 Координаты: {geo['latitude']:.4f}, {geo['longitude']:.4f}\\n\\n" +
+        ("После оплаты будут рассчитаны планеты, аспекты и персональная расшифровка. "
+'''
+
+    if old not in source:
+        raise RuntimeError("Natal place confirmation block not found")
+
+    source = source.replace(old, new, 1)
+    MAIN.write_text(source, encoding="utf-8")
+    py_compile.compile(str(MAIN), doraise=True)
+    print("Natal place confirmation patch applied")
+
+
 if __name__ == "__main__":
     calendar_patch()
     patch_groq()
+    patch_natal_place_message()
