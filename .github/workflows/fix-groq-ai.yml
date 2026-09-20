@@ -15,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Add GPT-OSS reasoning settings
+      - name: Patch GPT-OSS request and response handling
         shell: python
         run: |
           from pathlib import Path
@@ -24,17 +24,62 @@ jobs:
           p = Path("main.py")
           s = p.read_text(encoding="utf-8")
 
-          old = '        "max_completion_tokens": 1500\n    }'
-          new = '        "max_completion_tokens": 1500,\n        "reasoning_effort": "low",\n        "include_reasoning": False\n    }'
+          # GPT-OSS uses the completion budget for both reasoning and visible output.
+          # 1500 can be exhausted before the final answer is produced.
+          s = s.replace(
+              '"max_completion_tokens": 1500,',
+              '"max_completion_tokens": 4096,',
+              1
+          )
 
           if '"reasoning_effort": "low"' not in s:
-              if old not in s:
-                  raise RuntimeError("Could not find Groq data block")
-              s = s.replace(old, new, 1)
+              needle = '        "max_completion_tokens": 4096,\n'
+              replacement = (
+                  '        "max_completion_tokens": 4096,\n'
+                  '        "reasoning_effort": "low",\n'
+                  '        "include_reasoning": False\n'
+              )
+              if needle not in s:
+                  raise RuntimeError("Could not find max_completion_tokens block")
+              s = s.replace(needle, replacement, 1)
+
+          old = '''            result = await resp.json()
+            return result["choices"][0]["message"]["content"].strip()
+'''
+
+          new = '''            result = await resp.json()
+            choice = (result.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content = message.get("content") or ""
+
+            if not content.strip():
+                logger.error(
+                    "GROQ API EMPTY CONTENT: finish_reason=%s usage=%s message_keys=%s",
+                    choice.get("finish_reason"),
+                    result.get("usage"),
+                    list(message.keys()),
+                )
+                raise RuntimeError(
+                    "Groq returned empty content "
+                    f"(finish_reason={choice.get('finish_reason')})"
+                )
+
+            logger.info(
+                "GROQ OK: model=%s finish_reason=%s content_chars=%s",
+                result.get("model", MODEL_NAME),
+                choice.get("finish_reason"),
+                len(content.strip()),
+            )
+            return content.strip()
+'''
+
+          if old not in s:
+              raise RuntimeError("Could not find Groq response parsing block")
+          s = s.replace(old, new, 1)
 
           p.write_text(s, encoding="utf-8")
           py_compile.compile(str(p), doraise=True)
-          print("GPT-OSS reasoning settings applied")
+          print("GPT-OSS patch applied and main.py compiles")
 
       - name: Commit and push
         run: |
@@ -44,6 +89,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "fix: configure GPT-OSS reasoning"
+            git commit -m "fix: increase GPT-OSS completion budget and validate output"
             git push
           fi
