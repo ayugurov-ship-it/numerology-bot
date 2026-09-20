@@ -20,6 +20,7 @@ import contextlib
 from natal_engine import calculate_natal_chart, calculate_natal_chart_without_time
 from agents.location_agent import resolve_location
 from agents.natal_qa import validate_natal_chart
+from agents.orchestrator import calculate_verified_natal
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -2075,42 +2076,24 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
     await message.answer("🌌 Рассчитываю полную натальную карту...")
 
     try:
-        if data.get("birth_time"):
-            chart = calculate_natal_chart(
-                data["date"],
-                data["birth_time"],
-                float(data["latitude"]),
-                float(data["longitude"]),
-                data["timezone"],
-                data.get("place"),
-            )
-        else:
-            chart = calculate_natal_chart_without_time(
-                data["date"],
-                float(data["latitude"]),
-                float(data["longitude"]),
-                data["timezone"],
-                data.get("place"),
-            )
+        chart = await calculate_verified_natal(
+            date_str=data["date"],
+            birth_time=data.get("birth_time"),
+            latitude=float(data["latitude"]),
+            longitude=float(data["longitude"]),
+            timezone=data["timezone"],
+            place=data.get("place", ""),
+            calculate_exact=calculate_natal_chart,
+            calculate_unknown=calculate_natal_chart_without_time,
+        )
     except Exception as exc:
-        logger.exception("Natal calculation failed: %s", exc)
+        logger.exception("[NATAL] FINAL FAILURE: %s", exc)
         await message.answer(
-            "Не удалось выполнить астрономический расчёт. Данные сохранены, попробуйте ещё раз позже.",
+            "Не удалось получить проверенный астрономический расчёт. "
+            "Данные сохранены, но непроверенную карту я не отправляю.",
             reply_markup=main_menu(user_id),
         )
         return
-
-    qa_errors = validate_natal_chart(chart, birth_time_known=bool(data.get("birth_time")))
-    if qa_errors:
-        logger.error("Natal calculation QA FAILED: %s", " | ".join(qa_errors))
-        await message.answer(
-            "Расчёт прошёл с технической ошибкой проверки данных. Отчёт не формирую, "
-            "чтобы не показывать вам непроверенную карту. Попробуйте ещё раз позже.",
-            reply_markup=main_menu(user_id),
-        )
-        return
-    logger.info("Natal calculation QA OK: planets=%d aspects=%d houses=%d",
-                len(chart.get("planets", {})), len(chart.get("aspects", [])), len(chart.get("houses", [])))
 
     planets_lines = []
     for name, p in chart["planets"].items():
