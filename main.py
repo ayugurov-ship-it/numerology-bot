@@ -384,7 +384,10 @@ class PersonalizationEngine:
 
         if len(storage.personalization["user_history"][user_id_str]["actions"]) > 50:
             storage.personalization["user_history"][user_id_str]["actions"] = storage.personalization["user_history"][user_id_str]["actions"][-50:]
-        await storage.save_all()
+        # Conversation state is critical: Render/container restarts must not
+        # erase the user's current natal flow (waiting for time/place).
+        # Persist this update immediately instead of relying on the 60s batch save.
+        await storage.save_all(force=True)
 
     @staticmethod
     def get_user_birth_date(user_id: int) -> Optional[str]:
@@ -877,7 +880,7 @@ async def natal_full_test(callback: types.CallbackQuery):
     and bool(re.match(r"^([01]\d|2[0-3]):[0-5]\d$", m.text.strip()))
     and any(
         a.get("action") == "natal_full_waiting_time"
-        for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-3:]
+        for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:]
     )
 ))
 async def natal_full_time_handler(m: Message):
@@ -912,7 +915,7 @@ async def natal_full_time_handler(m: Message):
     and not m.text.startswith("/")
     and any(
         a.get("action") == "natal_full_waiting_place"
-        for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-2:]
+        for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-1:]
     )
 ))
 async def natal_full_place_handler(m: Message):
