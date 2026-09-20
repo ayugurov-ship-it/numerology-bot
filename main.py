@@ -517,7 +517,9 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.6,
-        "max_completion_tokens": 1500
+        "max_completion_tokens": 1500,
+        "reasoning_effort": "low",
+        "include_reasoning": False
     }
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
