@@ -352,6 +352,11 @@ GROQ_SYSTEM_PROMPTS = {
 Трактовка должна быть содержательной, персональной и связанной с конкретными данными карты.
 Без эзотерических клише и без категоричных предсказаний. {_LANG_RULE}""",
 
+    "natal_repair": f"""Ты — редактор исправленного натального отчёта.
+Перепиши отчёт только на основании переданной карты и замечаний контроля.
+Не добавляй новых фактов. Сохрани содержательность и структуру, но убери ошибки.
+{_LANG_RULE}""",
+
     "natal_qa": f"""Ты — независимый контролёр качества натального отчёта.
 Не создавай новый текст и не соглашайся с отчётом автоматически.
 Сверяй каждое фактическое утверждение с переданной рассчитанной картой.
@@ -605,7 +610,12 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
         "temperature": 0.6,
         # GPT-OSS uses completion budget for reasoning + visible answer.
         # Keep QA calls deliberately small to avoid TPM spikes.
-        "max_completion_tokens": 900 if system_prompt_key == "natal_qa" else 2800,
+        "max_completion_tokens": (
+            900 if system_prompt_key == "natal_qa"
+            else 1800 if system_prompt_key == "natal_repair"
+            else 2200 if system_prompt_key == "natal"
+            else 2800
+        ),
         "reasoning_effort": "low",
         "include_reasoning": False
     }
