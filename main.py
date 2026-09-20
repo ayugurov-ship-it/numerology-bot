@@ -7,6 +7,7 @@ import aiohttp
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, Optional, List
 from collections import defaultdict
 import random
@@ -648,7 +649,7 @@ async def generate_ai_affirmation(date_str: str, life_number: int, target_date_s
 def main_menu(user_id: int = None):
     keyboard = [
         [KeyboardButton(text="🔮 Мой профиль")],
-        [KeyboardButton(text="♈ Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
+        [KeyboardButton(text="🔮 Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
         [KeyboardButton(text="💞 Совместимость")],
         [KeyboardButton(text="📅 Изменить дату")],
         [KeyboardButton(text="🌌 Натальная карта"), KeyboardButton(text="✨ Карта дня")]
@@ -982,12 +983,12 @@ async def compatibility_main(m: Message):
         reply_markup=main_menu(user_id)
     )
 
-@router.message(lambda m: m.text == "♈ Гороскоп")
+@router.message(lambda m: m.text == "🔮 Гороскоп")
 async def horoscope_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "horoscope_request")
     await m.answer(
-        "♈ *Гороскоп*\n\n"
+        "🔮 *Гороскоп*\n\n"
         "Выберите период для вашего астро-нумерологического гороскопа:",
         parse_mode="Markdown",
         reply_markup=horoscope_type_menu()
@@ -1573,32 +1574,45 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     }
 
     period_display = type_names.get(h_type, "сегодня")
-    today = datetime.now()
+    today = datetime.now(ZoneInfo("Europe/Moscow")).date()
 
     if h_type == "today":
-        target_date = today
-        date_description = today.strftime('%d.%m.%Y')
+        target_date_start = today
+        target_date_end = today
+        date_description = today.strftime("%d.%m.%Y")
     elif h_type == "tomorrow":
-        target_date = today + timedelta(days=1)
-        date_description = target_date.strftime('%d.%m.%Y')
+        target_date_start = today + timedelta(days=1)
+        target_date_end = target_date_start
+        date_description = target_date_start.strftime("%d.%m.%Y")
     elif h_type == "week":
         target_date_start = today
         target_date_end = today + timedelta(days=6)
-        date_description = f"{target_date_start.strftime('%d.%m.%Y')} – {target_date_end.strftime('%d.%m.%Y')}"
+        date_description = (
+            f"{target_date_start.strftime('%d.%m.%Y')} – "
+            f"{target_date_end.strftime('%d.%m.%Y')}"
+        )
     elif h_type == "month":
-        year = today.year
-        month = today.month
-        target_date_start = datetime(year, month, 1)
-        if month == 12:
-            target_date_end = datetime(year + 1, 1, 1) - timedelta(days=1)
+        target_date_start = today.replace(day=1)
+        if target_date_start.month == 12:
+            target_date_end = target_date_start.replace(
+                year=target_date_start.year + 1, month=1, day=1
+            ) - timedelta(days=1)
         else:
-            target_date_end = datetime(year, month + 1, 1) - timedelta(days=1)
-        date_description = f"{target_date_start.strftime('%d.%m.%Y')} – {target_date_end.strftime('%d.%m.%Y')}"
+            target_date_end = target_date_start.replace(
+                month=target_date_start.month + 1, day=1
+            ) - timedelta(days=1)
+        date_description = (
+            f"{target_date_start.strftime('%d.%m.%Y')} – "
+            f"{target_date_end.strftime('%d.%m.%Y')}"
+        )
     else:
-        target_date = today
-        date_description = today.strftime('%d.%m.%Y')
+        h_type = "today"
+        target_date_start = today
+        target_date_end = today
+        period_display = "сегодня"
+        date_description = today.strftime("%d.%m.%Y")
 
-    await m.answer(f"♈ Создаю гороскоп на {period_display}...")
+    await m.answer(f"🔮 Создаю гороскоп на {period_display}...")
 
     storage.stats["horoscopes"] = storage.stats.get("horoscopes", 0) + 1
     await storage.save_all()
@@ -1608,223 +1622,129 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     zodiac_name = zodiac["name"] if zodiac else "не определён"
     zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
     zodiac_element = zodiac["element"] if zodiac else "не определена"
+
     period_header = f"{period_display.capitalize()} ({date_description})"
     start_str = target_date_start.strftime("%d.%m.%Y")
     end_str = target_date_end.strftime("%d.%m.%Y")
-    period_number = (
-        NumerologyFeatures.calculate_calendar_day_number(start_str)
-        if h_type in ["today", "tomorrow"]
-        else NumerologyFeatures.calculate_period_number(start_str, end_str)
-        if h_type == "week"
-        else NumerologyFeatures.calculate_month_period_number(start_str)
-    )
+
+    if h_type in ["today", "tomorrow"]:
+        period_number = NumerologyFeatures.calculate_calendar_day_number(start_str)
+    elif h_type == "week":
+        period_number = NumerologyFeatures.calculate_period_number(start_str, end_str)
+    else:
+        period_number = NumerologyFeatures.calculate_month_period_number(start_str)
 
     if h_type in ["today", "tomorrow"]:
         prompt = f"""
-Ты — профессиональный астро-нумеролог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог-консультант.
 
-Создай персональный гороскоп на {period_header} для человека, родившегося {date_str}.
+Создай персональный прогноз на {period_header} для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'} (это ПОСТОЯННОЕ число на всю жизнь, рассчитанное из даты рождения — оно НЕ меняется по годам).
+Число жизненного пути: {life_number if life_number else 'не определено'}.
+Число периода: {period_number}.
 
-Основывай гороскоп на астрологии (характеристики знака, энергия стихии) и дополняй нумерологическими наблюдениями.
+ВАЖНО:
+- Это развлекательная интерпретация, а не точное предсказание будущего.
+- У тебя НЕТ эфемерид. НЕ ВЫДУМЫВАЙ положения планет, аспекты и астрономические события.
+- Не утверждай, что конкретное событие обязательно произойдёт.
+- Не называй день гарантированно денежным, удачным или судьбоносным.
+- Основывай текст на характеристиках знака, стихии, числе жизненного пути и числе периода.
+- Говори только про конкретную дату {start_str}.
 
-Требования к стилю:
-- чистый литературный русский
-- тон спокойный, уверенный, как у личного консультанта
-- без эзотерического пафоса
-- без общих фраз
-- без повторов
-- обращение на «вы»
-- не упоминай расчёты и формулы
-
-Формат ответа — используй ТОЛЬКО эмодзи-разделители (БЕЗ текстовых заголовков, БЕЗ слов «вступление», «энергия дня» и т.п.):
-
-🌅 — 1–2 предложения: дата, знак, число пути, общий настрой.
-
-🔥 — один абзац: эмоциональный фон, уровень концентрации, внутренний ритм дня.
-
-💼 Работа и финансы — конкретные тенденции и что лучше делать.
-💬 Отношения и общение — стиль взаимодействия, возможные реакции людей.
-🧘 Внутреннее состояние — энергия, усталость, мотивация.
-
-⚡ — один абзац: реальные риски и вызовы дня.
-
-💡 — одна практическая рекомендация.
-
-🎯 — число дня {period_number} + как его использовать. Не придумывай другое число.
-
+Формат — ТОЛЬКО эмодзи-разделители, без текстовых заголовков:
+🌅 — общий фон дня, 2 предложения.
+🔥 — внутренний ритм и концентрация, 2 предложения.
+💼 — работа и дела: что имеет смысл делать и чего лучше не форсировать.
+💬 — отношения и общение: практическая рекомендация.
+⚡ — возможная сложность или зона внимания.
+💡 — одна конкретная рекомендация на день.
+🎯 — число дня {period_number} и его практическая интерпретация. Не придумывай другое число.
 ✨ — итог одним предложением.
 
-Объём: 150–200 слов.
-
-ЗАПРЕЩЕНО:
-- писать текстовые заголовки разделов (типа «Краткое вступление», «Энергия дня», «Ключевые сферы»)
-- английские слова и транслитерация
-- абстрактная философия
-
-Говори только про этот конкретный день.
+Объём: 150–190 слов.
+Обращение только на «вы».
+Не используй англицизмы, транслитерацию, слова «карма», «вселенная», «потоки».
 """
     elif h_type == "week":
         prompt = f"""
-Ты — профессиональный астро-нумеролог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог-консультант.
 
-Создай персональный гороскоп на неделю ({date_description}) для человека, родившегося {date_str}.
+Создай персональный прогноз на неделю {date_description} для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'} (постоянное число на всю жизнь, НЕ меняется по годам).
+Число жизненного пути: {life_number if life_number else 'не определено'}.
+Число недели: {period_number}.
 
-Основывай гороскоп на астрологии (тенденции знака, энергия стихии) и дополняй нумерологическими наблюдениями.
+ВАЖНО:
+- Это развлекательная интерпретация, а не точное предсказание будущего.
+- У тебя НЕТ эфемерид. НЕ ВЫДУМЫВАЙ положения планет и аспекты.
+- Не назначай конкретные даты «удачными», «денежными» или «судьбоносными».
+- Не придумывай события.
+- Используй только характеристики знака, стихии, числа жизненного пути и числа недели.
 
-Стиль:
-- деловой, спокойный, психологически точный
-- без мистики
-- без воды
-- обращение на «вы»
-
-Формат ответа — используй ТОЛЬКО эмодзи-разделители (БЕЗ текстовых заголовков):
-
-🌟 — общий вектор недели для {zodiac_name} с числом пути {life_number}. 2–3 предложения.
-
-📅 {target_date_start.strftime('%d.%m')}–{(target_date_start + timedelta(days=3)).strftime('%d.%m')} — тенденции первой половины: где действовать, где быть осторожнее.
-
-📅 {(target_date_start + timedelta(days=4)).strftime('%d.%m')}–{target_date_end.strftime('%d.%m')} — тенденции второй половины: возможности и риски.
-
-📌 — 2–3 даты для планирования и повышенного внимания. Не называй их гарантированно удачными, денежными или судьбоносными.
-
+Формат — ТОЛЬКО эмодзи-разделители:
+🌟 — главный вектор недели, 2–3 предложения.
+📅 — первая половина недели: задачи и зоны внимания.
+📅 — вторая половина недели: задачи и зоны внимания.
+💼 — работа и деньги.
+💬 — отношения и общение.
+⚡ — основные риски недели.
 💡 — практическая стратегия на неделю.
+🎯 — число недели {period_number} и его применение.
+✨ — итог недели.
 
-🎯 — число недели {period_number} и как оно влияет на вас. Не придумывай другое число.
-
-Объём: 250–300 слов.
-
-ЗАПРЕЩЕНО:
-- текстовые заголовки разделов (типа «Общая тема недели», «Первая половина»)
-- общие фразы и размытые формулировки
-- повторять одно и то же разными словами
+Не выделяй отдельные «ключевые» даты: без астрономических расчётов такие даты будут выдумкой.
+Объём: 230–280 слов.
+Обращение только на «вы».
+Не используй англицизмы, транслитерацию, слова «карма», «вселенная», «потоки».
 """
-    elif h_type == "month":
+    else:
         prompt = f"""
-Ты — профессиональный астро-нумеролог-консультант премиум-уровня.
+Ты — профессиональный астро-нумеролог-консультант.
 
-Создай персональный гороскоп на месяц ({date_description}) для человека, родившегося {date_str}.
+Создай персональный прогноз на месяц {date_description} для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'} (постоянное число на всю жизнь, НЕ меняется по годам).
+Число жизненного пути: {life_number if life_number else 'не определено'}.
+Число месяца: {period_number}.
 
-Основывай гороскоп на астрологии (характеристики знака, стихия) и дополняй нумерологическими наблюдениями.
+ВАЖНО:
+- Это развлекательная интерпретация, а не точное предсказание будущего.
+- У тебя НЕТ эфемерид. НЕ ВЫДУМЫВАЙ положения планет и аспекты.
+- Не придумывай конкретные события и гарантированные результаты.
+- Не называй отдельные даты удачными без расчётной основы.
+- Используй характеристики знака, стихии, числа жизненного пути и числа месяца.
 
-Стиль:
-- экспертный, спокойный, практичный
-- без мистики
-- обращение на «вы»
+Формат — ТОЛЬКО эмодзи-разделители:
+🌟 — главный вектор месяца, 2–3 предложения.
+📅 — первая декада: задачи и зоны внимания.
+📅 — вторая декада: задачи и зоны внимания.
+📅 — третья декада: задачи и зоны внимания.
+💼 — работа и деньги.
+💬 — отношения и общение.
+⚡ — основные риски месяца.
+💡 — стратегическая рекомендация.
+🎯 — число месяца {period_number} и его применение.
+✨ — итог месяца.
 
-Формат ответа — используй ТОЛЬКО эмодзи-разделители (БЕЗ текстовых заголовков):
-
-🌟 — главный вектор месяца для {zodiac_name} с числом пути {life_number}. 2–3 предложения.
-
-📅 1–10 — задачи первой декады, благоприятные действия, ограничения.
-
-📅 11–20 — задачи второй декады, возможности, на что обратить внимание.
-
-📅 21–конец месяца — задачи третьей декады, чего избегать, к чему стремиться.
-
-📌 — 3–4 ключевые даты месяца с пояснением.
-
-💡 — стратегическая рекомендация на месяц.
-
-🎯 — число месяца {period_number} и как его использовать в работе, отношениях, решениях. Не придумывай другое число.
-
-Объём: 300–350 слов.
-
-ЗАПРЕЩЕНО:
-- текстовые заголовки разделов (типа «Общая тема месяца», «Первая декада»)
-- эзотерические клише: «вселенная», «потоки», «карма»
-- философские рассуждения
+Не выделяй конкретные «ключевые даты»: без эфемерид это будет выдуманной точностью.
+Объём: 250–300 слов.
+Обращение только на «вы».
+Не используй англицизмы, транслитерацию, слова «карма», «вселенная», «потоки».
 """
 
-    horoscope = await ask_groq(prompt, "horoscope")
-
-    final_response = f"""
-{zodiac_emoji} *Ваш персональный гороскоп* {zodiac_emoji}
-*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
-*На {period_header}*
-
-{horoscope}
-
-📅 *Дата создания гороскопа:* {today.strftime("%d.%m.%Y %H:%M")}
-"""
-
-    await safe_reply(m, final_response, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, f"horoscope_generated_{h_type}", {"date": date_str, "period": h_type}, birth_date=date_str)
-
-async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None):
-    user_id = m.from_user.id
-    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
-    zodiac = get_zodiac_sign(date_str)
-    zodiac_name = zodiac["name"] if zodiac else "не определён"
-    zodiac_locative = zodiac["locative"] if zodiac else zodiac_name
-    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
-    zodiac_element = zodiac["element"] if zodiac else "не определена"
-    today = datetime.now().strftime("%d.%m.%Y")
-
-    time_info = f"Время рождения: {birth_time}" if birth_time else "Время рождения: не указано (Асцендент и дома определить невозможно)"
-    await m.answer("🌌 Составляю вашу натальную карту...")
-
-    prompt = f"""
-Составь натальный портрет для человека. Обращайся на «вы» (НИКОГДА не «он», «она», «его», «её»).
-
-Данные:
-- Дата рождения: {date_str}
-- Знак зодиака: {zodiac_name} (Солнце в {zodiac_locative}, стихия: {zodiac_element})
-- Число жизненного пути: {life_number}
-
-ВАЖНО: ты НЕ имеешь доступа к эфемеридам и НЕ можешь рассчитать реальные положения планет.
-Единственный точный факт — Солнце в {zodiac_locative} (определено по дате рождения).
-НЕ ВЫДУМЫВАЙ конкретные знаки для Луны, Асцендента, Венеры, Марса и других планет.
-Вместо этого описывай общие характеристики через достоверный знак Солнца и число пути.
-
-Формат ответа — ТОЛЬКО эмодзи-разделители, БЕЗ текстовых заголовков, обращение на «вы»:
-
-☀️ — Солнце в {zodiac_locative}: ваши ключевые черты, жизненная цель, способ самовыражения. 3–4 предложения.
-
-🔥 — Стихия {zodiac_element}: как она формирует ваш темперамент, реакции, способ действия. 2–3 предложения.
-
-💞 — Любовь и отношения: стиль привязанности, что цените в партнёре, как проявляете чувства — исходя из качеств знака {zodiac_name}. 2–3 предложения.
-
-💼 — Призвание и карьера: природные таланты, подходящие сферы, стиль работы. 2–3 предложения.
-
-🪐 — Жизненные уроки: главные задачи развития для знака {zodiac_name} с числом пути {life_number}, зоны роста. 2–3 предложения.
-
-🔢 — Число жизненного пути {life_number}: его глубинный смысл и как оно дополняет или корректирует качества знака {zodiac_name}. 2–3 предложения.
-
-⚡ — Сильные стороны и уязвимости: что даёт силу и где важно быть осторожнее. 2–3 предложения.
-
-✨ — Итог: ваша суть в 1–2 предложениях.
-
-Стиль: прямой, конкретный, без воды. Обращение ТОЛЬКО на «вы/ваш/вам».
-
-ЗАПРЕЩЕНО:
-- местоимения «он», «она», «его», «её» — ТОЛЬКО «вы»
-- выдумывать положения планет по знакам (Луна в Овне, Венера в Скорпионе и т.п.)
-- текстовые заголовки разделов
-- англицизмы и транслитерации
-- «вселенная», «карма», «потоки»
-
-Объём: 250–350 слов.
-"""
-
-    response = await ask_groq(prompt, "natal")
-
+    response = await ask_groq(prompt, "horoscope")
     final_text = f"""
-🌌 *Ваша натальная карта* 🌌
+🔮 *Ваш гороскоп* 🔮
 *{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
-{"*Время рождения: " + birth_time + "*" if birth_time else ""}
 
 {response}
-
-📅 *Дата составления:* {today}
 """
     await safe_reply(m, final_text, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, "natal_chart_generated", {"date": date_str}, birth_date=date_str)
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "horoscope_generated",
+        {"date": date_str, "period": h_type},
+        birth_date=date_str
+    )
 
 async def daily_card_handler(m: Message, date_str: str):
     user_id = m.from_user.id
