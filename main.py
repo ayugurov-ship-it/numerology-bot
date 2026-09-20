@@ -791,7 +791,7 @@ async def natal_full_test(callback: types.CallbackQuery):
 
 @router.message(lambda m: (
     bool(m.text)
-    and bool(re.match(r"^([01]\\d|2[0-3]):[0-5]\\d$", m.text.strip()))
+    and bool(re.match(r"^([01]\d|2[0-3]):[0-5]\d$", m.text.strip()))
     and any(
         a.get("action") == "natal_full_waiting_time"
         for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-3:]
