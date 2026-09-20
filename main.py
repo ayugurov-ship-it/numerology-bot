@@ -2174,7 +2174,23 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
 - Объём 1100–1500 слов.
 """
 
-    response = await ask_groq(prompt, "natal")
+    try:
+        response = await generate_verified_report(
+            prompt=prompt,
+            chart=chart,
+            birth_time_known=time_known,
+            ask_groq=ask_groq,
+            max_repairs=2,
+        )
+    except Exception as exc:
+        logger.exception("[NATAL_REPORT] FINAL QA FAILURE: %s", exc)
+        await message.answer(
+            "Не удалось получить отчёт, прошедший контроль качества. "
+            "Непроверенный текст пользователю не отправляю.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
     storage.stats["full_natal_reports"] = storage.stats.get("full_natal_reports", 0) + 1
     await PersonalizationEngine.update_user_profile(
         user_id,
