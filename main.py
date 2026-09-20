@@ -2320,7 +2320,7 @@ async def process_telegram_update(update_data: dict):
         update = Update(**update_data)
         await dp.feed_update(bot, update)
     except Exception as e:
-        logger.error(f"Error processing update: {e}")
+        logger.exception("Error processing update: %s", e)
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
