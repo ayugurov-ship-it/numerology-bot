@@ -17,16 +17,48 @@ FORBIDDEN_WORDS = ("карма", "вселенная", "потоки")
 
 
 def _aspect_claims(text: str):
+    """Извлекает только явно связанные пары, а не все планеты из предложения.
+
+    Старый алгоритм брал первые две планеты в целом предложении. Из-за этого
+    фраза вроде «пятой дом (Сатурн) и тригоном Венера–Уран» ошибочно
+    превращалась в «Венера–Сатурн». Сначала ищем явную пару через тире,
+    затем — конструкцию «тригон Венера–Уран».
+    """
     claims = []
+    planet = "|".join(re.escape(p) for p in PLANETS)
+
+    patterns = [
+        re.compile(
+            rf"(?P<a>{planet})\s*[-—–]\s*(?P<asp>соединени\w*|секстил\w*|квадрат\w*|тригон\w*|оппозиц\w*)\s*[-—–]\s*(?P<b>{planet})",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            rf"(?P<asp>соединени\w*|секстил\w*|квадрат\w*|тригон\w*|оппозиц\w*)\s+(?P<a>{planet})\s*[-—–]\s*(?P<b>{planet})",
+            re.IGNORECASE,
+        ),
+    ]
+
+    aspect_map = {
+        "соединение": "соединение",
+        "соединением": "соединение",
+        "соединением": "соединение",
+        "секстиль": "секстиль",
+        "секстилем": "секстиль",
+        "квадрат": "квадрат",
+        "квадратом": "квадрат",
+        "тригон": "тригон",
+        "тригоном": "тригон",
+        "оппозиция": "оппозиция",
+        "оппозицией": "оппозиция",
+    }
+
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
-        low = sentence.lower()
-        found_aspect = next((a for a in ASPECT_WORDS if a in low), None)
-        if not found_aspect:
-            continue
-        found_planets = [p for p in PLANETS if p.lower() in low]
-        # A sentence with two planet names and an aspect is treated as a factual claim.
-        if len(found_planets) >= 2:
-            claims.append((found_planets[0], found_planets[1], found_aspect, sentence.strip()))
+        for pattern in patterns:
+            for match in pattern.finditer(sentence):
+                asp_raw = match.group("asp").lower()
+                asp = next((v for k, v in aspect_map.items() if asp_raw.startswith(k)), None)
+                if asp:
+                    claims.append((match.group("a"), match.group("b"), asp, sentence.strip()))
     return claims
 
 
