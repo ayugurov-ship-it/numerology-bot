@@ -6,4 +6,4 @@ python-dotenv>=1.0.0
 pydantic>=2.10.0
 slowapi>=0.1.9
 pysweph>=2.10.3.6
-timezonefinder>=8.0.0
+timezonefinder>=9.0.0
