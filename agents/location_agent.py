@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ import aiohttp
 from timezonefinder import TimezoneFinder
 
 
+logger = logging.getLogger(__name__)
 tf = TimezoneFinder()
 _CACHE: dict[str, dict[str, Any]] = {}
 
