@@ -655,7 +655,7 @@ def main_menu(user_id: int = None):
         [KeyboardButton(text="🔮 Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
         [KeyboardButton(text="💞 Совместимость")],
         [KeyboardButton(text="📅 Изменить дату")],
-        [KeyboardButton(text="🌌 Натальная карта"), KeyboardButton(text="✨ Карта дня")]
+        [KeyboardButton(text="🌌 Натальный портрет"), KeyboardButton(text="✨ Карта дня")]
     ]
 
     if user_id in ADMIN_IDS:
@@ -758,7 +758,7 @@ async def natal_full_buy(callback: types.CallbackQuery):
     if not stored_date:
         await callback.message.answer(
             "💎 *Полная натальная карта — 499 ₽*\n\n"
-            "Сначала укажите дату рождения через раздел «🌌 Натальная карта».",
+            "Сначала укажите дату рождения через раздел «🌌 Натальный портрет»",
             parse_mode="Markdown",
             reply_markup=main_menu(user_id)
         )
@@ -917,12 +917,14 @@ async def natal_full_place_handler(m: Message):
     await m.answer(
         "✅ *Данные для полной карты готовы*\n\n"
         f"📅 Дата: *{date_str}*\n"
-        f"🕐 Время: *{birth_time}*\n"
+        f"🕐 Время: *{birth_time or 'неизвестно'}*\n"
         f"📍 Место: *{geo['display_name']}*\n"
         f"🌍 Часовой пояс: *{geo['timezone']}*\n"
         f"🧭 Координаты: {geo['latitude']:.4f}, {geo['longitude']:.4f}\n\n"
-        "После оплаты будет выполнен точный расчёт планет, Асцендента, домов и аспектов, "
-        "а затем AI сформирует персональную расшифровку.",
+        ("После оплаты будут рассчитаны планеты, аспекты и персональная расшифровка. "
+         "При известном времени также будут рассчитаны Асцендент и дома." if birth_time else
+         "После оплаты будут рассчитаны планеты, аспекты и персональная расшифровка. "
+         "При неизвестном времени Асцендент и дома рассчитываться не будут."),
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
@@ -1227,7 +1229,7 @@ async def numerology_main(m: Message):
         return
     await show_birth_date_picker(m)
 
-@router.message(lambda m: m.text == "🌌 Натальная карта")
+@router.message(lambda m: m.text == "🌌 Натальный портрет")
 async def natal_chart_main(m: Message):
     user_id = m.from_user.id
     await PersonalizationEngine.update_user_profile(user_id, "natal_chart_request")
