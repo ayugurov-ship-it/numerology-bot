@@ -118,6 +118,6 @@ ISSUES: список конкретных проблем; если пробле�
 - Не добавляй новые факты, которых нет в карте.
 - Сохрани структуру и персональность, но убери ошибки.
 """
-        report = await ask_groq(repair_prompt, "natal")
+        report = await ask_groq(repair_prompt, "natal_repair")
 
     raise RuntimeError("Report QA завершился без проверенного результата.")
