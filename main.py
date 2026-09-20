@@ -548,6 +548,12 @@ def get_zodiac_sign(date_str: str) -> Optional[dict]:
 # RETRY DECORATOR FOR GROQ
 # =====================
 
+class GroqRateLimitError(RuntimeError):
+    def __init__(self, retry_after: float | None = None):
+        super().__init__("Groq rate limit exceeded")
+        self.retry_after = retry_after
+
+
 def retry(max_retries=3, backoff_factor=1.0):
     def decorator(func):
         @wraps(func)
@@ -559,8 +565,11 @@ def retry(max_retries=3, backoff_factor=1.0):
                 except Exception as e:
                     if retries == max_retries - 1:
                         raise
-                    wait = backoff_factor * (2 ** retries)
-                    logger.warning("Retry %s/%s after %ss: %s", retries + 1, max_retries, wait, e)
+                    if isinstance(e, GroqRateLimitError) and e.retry_after is not None:
+                        wait = max(float(e.retry_after) + 0.5, 1.0)
+                    else:
+                        wait = backoff_factor * (2 ** retries)
+                    logger.warning("Retry %s/%s after %.1fs: %s", retries + 1, max_retries, wait, e)
                     await asyncio.sleep(wait)
                     retries += 1
         return wrapper
@@ -586,7 +595,9 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.6,
-        "max_completion_tokens": 1500,
+        # GPT-OSS uses completion budget for reasoning + visible answer.
+        # Keep QA calls deliberately small to avoid TPM spikes.
+        "max_completion_tokens": 900 if system_prompt_key == "natal_qa" else 2800,
         "reasoning_effort": "low",
         "include_reasoning": False
     }
@@ -596,15 +607,36 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
             if resp.status != 200:
                 error_text = await resp.text()
                 logger.error("GROQ API ERROR %s: %s", resp.status, error_text)
+                if resp.status == 429:
+                    retry_after = resp.headers.get("retry-after")
+                    try:
+                        retry_after = float(retry_after) if retry_after else None
+                    except ValueError:
+                        retry_after = None
+                    raise GroqRateLimitError(retry_after)
                 raise ValueError("Groq API error")
             result = await resp.json()
-            return result["choices"][0]["message"]["content"].strip()
+            choice = (result.get("choices") or [{}])[0]
+            content = ((choice.get("message") or {}).get("content") or "").strip()
+            if not content:
+                raise RuntimeError(
+                    f"Groq returned empty content (finish_reason={choice.get('finish_reason')})"
+                )
+            logger.info(
+                "GROQ OK: model=%s finish_reason=%s content_chars=%s",
+                result.get("model", MODEL_NAME),
+                choice.get("finish_reason"),
+                len(content),
+            )
+            return content
 
 async def ask_groq(prompt: str, system_prompt_key: str = "default") -> str:
     try:
         return await _ask_groq_request(prompt, system_prompt_key)
     except Exception as e:
         logger.error("GROQ ERROR: %s", e)
+        if system_prompt_key in {"natal", "natal_qa"}:
+            raise
         return "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
 
 async def generate_ai_affirmation(date_str: str, life_number: int, target_date_str: str, period: str = "day") -> str:
