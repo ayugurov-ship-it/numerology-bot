@@ -17,7 +17,7 @@ from functools import wraps
 from contextlib import asynccontextmanager
 import contextlib
 
-from natal_engine import calculate_natal_chart, geocode_place
+from natal_engine import calculate_natal_chart, calculate_natal_chart_without_time, geocode_place
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -764,17 +764,54 @@ async def natal_full_buy(callback: types.CallbackQuery):
         )
         return
 
-    await PersonalizationEngine.update_user_profile(
-        user_id,
-        "natal_full_waiting_time",
-        {"date": stored_date, "price_rub": 499}
-    )
     await callback.message.answer(
         "💎 *Готовим полную натальную карту*\n\n"
         "Дата рождения: *" + stored_date + "*\n\n"
-        "Шаг 1 из 2 — укажите *точное местное время рождения* в формате ЧЧ:ММ.\n"
-        "Например: 14:35\n\n"
+        "Знаете точное время рождения? Оно нужно для Асцендента и домов.\n\n"
+        "Если время неизвестно — это не проблема: карту можно построить по дате и месту рождения, "
+        "но без Асцендента и домов.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🕐 Знаю точное время", callback_data="natal_full_known_time")],
+            [InlineKeyboardButton(text="❓ Не знаю время", callback_data="natal_full_unknown_time")],
+        ])
+    )
+
+@router.callback_query(lambda c: c.data == "natal_full_known_time")
+async def natal_full_known_time(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+    date_str = PersonalizationEngine.get_user_birth_date(user_id)
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_waiting_time",
+        {"date": date_str, "price_rub": 499, "time_known": True}
+    )
+    await callback.message.answer(
+        "🕐 *Укажите точное местное время рождения* в формате ЧЧ:ММ.\n\n"
+        "Например: 07:35\n\n"
         "Время важно для Асцендента и домов.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+
+@router.callback_query(lambda c: c.data == "natal_full_unknown_time")
+async def natal_full_unknown_time(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+    date_str = PersonalizationEngine.get_user_birth_date(user_id)
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_waiting_place",
+        {"date": date_str, "birth_time": None, "price_rub": 499, "time_known": False}
+    )
+    await callback.message.answer(
+        "❓ *Точное время неизвестно — это нормально.*\n\n"
+        "Карту всё равно можно рассчитать по дате и месту рождения. "
+        "Асцендент и дома определяться не будут, а положение Луны будет отдельно проверено "
+        "на возможную неопределённость в течение суток.\n\n"
+        "📍 Теперь укажите *место рождения*: город и страну.\n"
+        "Например: Москва, Россия",
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
@@ -2029,14 +2066,23 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
     await message.answer("🌌 Рассчитываю полную натальную карту...")
 
     try:
-        chart = calculate_natal_chart(
-            data["date"],
-            data["birth_time"],
-            float(data["latitude"]),
-            float(data["longitude"]),
-            data["timezone"],
-            data.get("place"),
-        )
+        if data.get("birth_time"):
+            chart = calculate_natal_chart(
+                data["date"],
+                data["birth_time"],
+                float(data["latitude"]),
+                float(data["longitude"]),
+                data["timezone"],
+                data.get("place"),
+            )
+        else:
+            chart = calculate_natal_chart_without_time(
+                data["date"],
+                float(data["latitude"]),
+                float(data["longitude"]),
+                data["timezone"],
+                data.get("place"),
+            )
     except Exception as exc:
         logger.exception("Natal calculation failed: %s", exc)
         await message.answer(
@@ -2048,9 +2094,16 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
     planets_lines = []
     for name, p in chart["planets"].items():
         retro = " ℞" if p["retrograde"] else ""
-        planets_lines.append(f"• {name}: {p['formatted']}, дом {p['house']}{retro}")
+        house = f", дом {p['house']}" if p.get("house") else ""
+        uncertainty = (
+            f" — возможны знаки: {', '.join(p.get('possible_signs', []))}"
+            if p.get("time_uncertainty") else ""
+        )
+        planets_lines.append(f"• {name}: {p['formatted']}{house}{retro}{uncertainty}")
 
     houses_lines = [f"• {h['house']}-й дом: {h['formatted']}" for h in chart["houses"]]
+    if not houses_lines:
+        houses_lines = ["• Дома не рассчитываются без точного времени рождения."]
     aspects_lines = [
         f"• {a['first']} — {a['aspect']} — {a['second']} (орб {a['orb']}°)"
         for a in chart["aspects"]
@@ -2107,9 +2160,10 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
         birth_date=data["date"],
     )
 
+    birth_display = data.get("birth_time") or "время неизвестно"
     header = (
         "🌌 *ПОЛНАЯ НАТАЛЬНАЯ КАРТА*\n\n"
-        f"📅 {data['date']}  🕐 {data['birth_time']}\n"
+        f"📅 {data['date']}  🕐 {birth_display}\n"
         f"📍 {data['place']}\n"
         f"🌍 {data['timezone']}\n\n"
         "*Положения планет:*\n" + "\n".join(planets_lines) +
