@@ -419,6 +419,57 @@ class NumerologyFeatures:
             return None
 
     @staticmethod
+    def reduce_number(value: int, keep_master: bool = False) -> int:
+        while value > 9 and (not keep_master or value not in [11, 22, 33]):
+            value = sum(int(d) for d in str(value))
+        return value
+
+    @staticmethod
+    def calculate_day_number(date_str: str) -> Optional[int]:
+        try:
+            return NumerologyFeatures.reduce_number(int(date_str.split('.')[0]), keep_master=True)
+        except Exception:
+            return None
+
+    @staticmethod
+    def calculate_month_number(date_str: str) -> Optional[int]:
+        try:
+            return NumerologyFeatures.reduce_number(int(date_str.split('.')[1]))
+        except Exception:
+            return None
+
+    @staticmethod
+    def calculate_year_number(date_str: str) -> Optional[int]:
+        try:
+            year = date_str.split('.')[2]
+            return NumerologyFeatures.reduce_number(sum(int(d) for d in year), keep_master=True)
+        except Exception:
+            return None
+
+    @staticmethod
+    def calculate_calendar_day_number(date_str: str) -> Optional[int]:
+        try:
+            return NumerologyFeatures.reduce_number(sum(int(d) for d in date_str.replace('.', '')))
+        except Exception:
+            return None
+
+    @staticmethod
+    def calculate_period_number(start_date_str: str, end_date_str: str) -> Optional[int]:
+        try:
+            digits = start_date_str.replace('.', '') + end_date_str.replace('.', '')
+            return NumerologyFeatures.reduce_number(sum(int(d) for d in digits))
+        except Exception:
+            return None
+
+    @staticmethod
+    def calculate_month_period_number(date_str: str) -> Optional[int]:
+        try:
+            year, month, _ = date_str.split('.')
+            return NumerologyFeatures.reduce_number(sum(int(d) for d in year + month))
+        except Exception:
+            return None
+
+    @staticmethod
     def generate_daily_affirmation(date_str: str) -> str:
         life_number = NumerologyFeatures.calculate_life_path_number(date_str)
 
@@ -1249,12 +1300,20 @@ async def process_profile(m: Message, date_str: str):
     storage.stats["user_last_activity"][user_id_str] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await storage.save_all()
 
+    day_number = NumerologyFeatures.calculate_day_number(date_str)
+    month_number = NumerologyFeatures.calculate_month_number(date_str)
+    year_number = NumerologyFeatures.calculate_year_number(date_str)
+
     prompt = f"""
 Ты — профессиональный астро-нумеролог и психолог-консультант премиум-уровня.
+Не составляй универсальный текст про знак или число: каждый вывод связывай с конкретными исходными данными.
 
 Создай комбинированный портрет личности для человека, родившегося {date_str}.
 Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
 Число жизненного пути: {life_number if life_number else "не определено"}.
+Число дня рождения: {day_number}.
+Число месяца рождения: {month_number}.
+Число года рождения: {year_number}.
 
 ТРЕБОВАНИЯ К СТИЛЮ:
 - чистый литературный русский
@@ -1280,15 +1339,16 @@ async def process_profile(m: Message, date_str: str):
 Не более 3 пунктов. Честно, но поддерживающе.
 
 5. КАРЬЕРА И РЕАЛИЗАЦИЯ
-В каких ролях и форматах человек раскрывается лучше всего с учётом знака и числа.
+Опишите стиль работы, принятие решений, отношение к риску, ответственности и долгим проектам. Не выдавайте случайный список профессий.
 
 6. ОТНОШЕНИЯ
 Как знак зодиака и число пути влияют на стиль в близких отношениях.
 
 7. ИТОГОВЫЙ ВЕКТОР
-Одно ёмкое резюме личности.
+Сформулируйте 3 конкретных практических вывода, которые человек может применить в жизни.
 
-ОБЪЁМ: 300–360 слов.
+ОБЪЁМ: 330–390 слов.
+Не придумывайте дополнительные числа, факты, события или положения планет.
 
 ЗАПРЕЩЕНО:
 - писать «я»
@@ -1336,13 +1396,21 @@ async def process_numerology(m: Message, date_str: str):
     storage.stats["user_last_activity"][user_id_str] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await storage.save_all()
 
+    day_number = NumerologyFeatures.calculate_day_number(date_str)
+    month_number = NumerologyFeatures.calculate_month_number(date_str)
+    year_number = NumerologyFeatures.calculate_year_number(date_str)
+
     prompt = f"""
 Ты — профессиональный нумеролог и психолог-консультант премиум-уровня.
+Используй всю числовую структуру даты, а не только число жизненного пути.
 
 Создай глубокий персональный нумерологический портрет для человека,
 родившегося {date_str}.
 Число жизненного пути: {life_number if life_number else "не определено"}.
-Знак зодиака: {zodiac_name} ({zodiac_element}). Кратко упомяни, как знак дополняет число жизненного пути.
+Число дня рождения: {day_number}.
+Число месяца рождения: {month_number}.
+Число года рождения: {year_number}.
+Знак зодиака: {zodiac_name} ({zodiac_element}). Используй его только как дополнительный контекст.
 
 ТРЕБОВАНИЯ К СТИЛЮ:
 - чистый литературный русский
@@ -1376,7 +1444,8 @@ async def process_numerology(m: Message, date_str: str):
 7. ИТОГОВЫЙ ВЕКТОР
 Одно ёмкое резюме личности.
 
-ОБЪЁМ: 300–360 слов.
+ОБЪЁМ: 330–390 слов.
+Не придумывайте дополнительные числа и не повторяйте характеристику числа жизненного пути во всех разделах.
 
 ЗАПРЕЩЕНО:
 - писать «я»
@@ -1450,8 +1519,9 @@ async def compatibility_analysis_handler(m: Message):
 2. НУМЕРОЛОГИЧЕСКАЯ СОВМЕСТИМОСТЬ
 Как сочетаются числа жизненного пути {life1} и {life2}, что это означает для отношений.
 
-3. ОБЩАЯ ОЦЕНКА СОВМЕСТИМОСТИ
-Укажи процент совместимости и кратко объясни, за счёт каких факторов он сформирован.
+3. ДИНАМИКА ПАРЫ
+Покажи, что сближает партнёров и где возникают потенциальные точки напряжения.
+Не придумывай процент совместимости: в текущей системе нет объективной формулы для такого числа.
 
 4. СИЛЬНЫЕ СТОРОНЫ СОЮЗА
 3–4 конкретных пункта с пояснениями.
@@ -1460,7 +1530,7 @@ async def compatibility_analysis_handler(m: Message):
 Не более 3 пунктов. Без обвинений, только зоны роста.
 
 6. РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЧНОГО РАЗВИТИЯ
-Практичные советы, применимые в реальной жизни.
+4 практичных совета для общения, совместных решений и распределения ответственности.
 
 ОБЪЁМ: 270–300 слов.
 
@@ -1539,6 +1609,15 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
     zodiac_element = zodiac["element"] if zodiac else "не определена"
     period_header = f"{period_display.capitalize()} ({date_description})"
+    start_str = target_date_start.strftime("%d.%m.%Y")
+    end_str = target_date_end.strftime("%d.%m.%Y")
+    period_number = (
+        NumerologyFeatures.calculate_calendar_day_number(start_str)
+        if h_type in ["today", "tomorrow"]
+        else NumerologyFeatures.calculate_period_number(start_str, end_str)
+        if h_type == "week"
+        else NumerologyFeatures.calculate_month_period_number(start_str)
+    )
 
     if h_type in ["today", "tomorrow"]:
         prompt = f"""
@@ -1573,7 +1652,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 💡 — одна практическая рекомендация.
 
-🎯 — число удачи дня + как его использовать.
+🎯 — число дня {period_number} + как его использовать. Не придумывай другое число.
 
 ✨ — итог одним предложением.
 
@@ -1610,11 +1689,11 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 📅 {(target_date_start + timedelta(days=4)).strftime('%d.%m')}–{target_date_end.strftime('%d.%m')} — тенденции второй половины: возможности и риски.
 
-📌 — 2–3 ключевые даты недели с пояснением.
+📌 — 2–3 даты для планирования и повышенного внимания. Не называй их гарантированно удачными, денежными или судьбоносными.
 
 💡 — практическая стратегия на неделю.
 
-🎯 — число недели и как оно влияет на вас.
+🎯 — число недели {period_number} и как оно влияет на вас. Не придумывай другое число.
 
 Объём: 250–300 слов.
 
@@ -1652,7 +1731,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
 💡 — стратегическая рекомендация на месяц.
 
-🎯 — число месяца и как его использовать в работе, отношениях, решениях.
+🎯 — число месяца {period_number} и как его использовать в работе, отношениях, решениях. Не придумывай другое число.
 
 Объём: 300–350 слов.
 
@@ -1665,7 +1744,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     horoscope = await ask_groq(prompt, "horoscope")
 
     final_response = f"""
-♈ *Ваш персональный гороскоп* ♈
+{zodiac_emoji} *Ваш персональный гороскоп* {zodiac_emoji}
 *{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
 *На {period_header}*
 
@@ -1761,6 +1840,8 @@ async def daily_card_handler(m: Message, date_str: str):
     storage.stats["daily_cards"] = storage.stats.get("daily_cards", 0) + 1
     await storage.save_all()
 
+    day_number = NumerologyFeatures.calculate_calendar_day_number(today)
+
     prompt = f"""
 Составь карту дня на СЕГОДНЯ ({today}). Обращайся на «вы».
 
@@ -1786,7 +1867,7 @@ async def daily_card_handler(m: Message, date_str: str):
 
 💬 — Общение и отношения: как строить взаимодействие сегодня. 1–2 предложения.
 
-🎯 — Число дня: нумерологическое число даты {today} (сумма цифр до однозначного) и как его использовать.
+🎯 — Число дня: {day_number}. Объясни его практическое применение сегодня.
 
 ✨ — Аффирмация дня: одно предложение от первого лица («я»), не более 15 слов.
 
