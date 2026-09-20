@@ -96,26 +96,49 @@ def angular_distance(a: float, b: float) -> float:
 
 
 async def geocode_place(place: str) -> dict[str, Any]:
-    """Находит координаты места рождения через Nominatim."""
+    """Находит координаты места рождения через несколько вариантов запроса."""
     url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        "q": place,
-        "format": "jsonv2",
-        "limit": 1,
-        "addressdetails": 1,
-    }
     headers = {
         "User-Agent": "soulcode-gurov-bot/1.0 (natal chart)",
         "Accept-Language": "ru,en",
     }
+    cleaned = place.strip()
+    variants = [cleaned]
+
+    # Помогаем с запросами вида «село ..., район ..., страна».
+    simplified = cleaned
+    for prefix in ("село ", "деревня ", "посёлок ", "поселок ", "г. "):
+        simplified = simplified.replace(prefix, "")
+    if simplified != cleaned:
+        variants.append(simplified)
+
+    # Частая форма названия Узынагаша встречается с разным написанием.
+    if "узунагач" in cleaned.lower() or "узинагач" in cleaned.lower():
+        variants.extend([
+            "Узынагаш, Казахстан",
+            "Узынагаш, Жамбылский район, Алматинская область, Казахстан",
+        ])
+
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"Геокодер вернул HTTP {resp.status}")
-            data = await resp.json(content_type=None)
+        data = []
+        for query in dict.fromkeys(variants):
+            params = {
+                "q": query,
+                "format": "jsonv2",
+                "limit": 3,
+                "addressdetails": 1,
+            }
+            async with session.get(url, params=params, headers=headers) as resp:
+                if resp.status != 200:
+                    continue
+                candidate = await resp.json(content_type=None)
+                if candidate:
+                    data = candidate
+                    break
+
     if not data:
-        raise ValueError("Место рождения не найдено. Укажите город и страну.")
+        raise ValueError("Место рождения не найдено. Укажите населённый пункт и страну.")
     item = data[0]
     lat = float(item["lat"])
     lon = float(item["lon"])
@@ -143,6 +166,93 @@ def _calc_planet(jd_ut: float, body: int):
     except Exception:
         pass
     return swe.calc_ut(jd_ut, body, swe.FLG_MOSEPH | swe.FLG_SPEED)
+
+def _calculate_aspects(planets: dict[str, Any]) -> list[dict[str, Any]]:
+    aspects = []
+    names = list(planets.keys())
+    for i, first in enumerate(names):
+        for second in names[i + 1:]:
+            diff = angular_distance(planets[first]["longitude"], planets[second]["longitude"])
+            for aspect_name, exact, orb in ASPECTS:
+                actual_orb = abs(diff - exact)
+                if actual_orb <= orb:
+                    aspects.append({
+                        "first": first,
+                        "second": second,
+                        "aspect": aspect_name,
+                        "exact_degree": exact,
+                        "orb": round(actual_orb, 2),
+                    })
+                    break
+    return aspects
+
+
+def calculate_natal_chart_without_time(
+    date_str: str,
+    latitude: float,
+    longitude: float,
+    timezone_name: str,
+    place_display_name: str | None = None,
+) -> dict[str, Any]:
+    """Рассчитывает карту без времени. Планеты берутся на местный полдень.
+    Асцендент и дома намеренно не рассчитываются."""
+    local_dt = datetime.strptime(date_str, "%d.%m.%Y").replace(
+        hour=12, minute=0, tzinfo=ZoneInfo(timezone_name)
+    )
+    utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
+    hour = utc_dt.hour + utc_dt.minute / 60
+    jd_ut = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, hour)
+    swe.set_ephe_path("")
+
+    planets = {}
+    for name, body in PLANETS:
+        values, _ = _calc_planet(jd_ut, body)
+        lon = float(values[0])
+        pos = zodiac_position(lon)
+        planets[name] = {
+            **pos,
+            "longitude": round(lon, 6),
+            "latitude": round(float(values[1]), 6),
+            "distance_au": round(float(values[2]), 8),
+            "speed_longitude": round(float(values[3]), 6),
+            "retrograde": float(values[3]) < 0,
+            "house": None,
+        }
+
+    # Проверяем Луну в начале и конце местных суток. Если знак меняется,
+    # не выдаём ложную точность.
+    moon_signs = set()
+    for local_hour in (0, 23.999):
+        check_local = local_dt.replace(hour=0) if local_hour == 0 else local_dt.replace(hour=23, minute=59, second=56)
+        check_utc = check_local.astimezone(ZoneInfo("UTC"))
+        check_jd = swe.julday(
+            check_utc.year, check_utc.month, check_utc.day,
+            check_utc.hour + check_utc.minute / 60 + check_utc.second / 3600
+        )
+        moon_values, _ = _calc_planet(check_jd, swe.MOON)
+        moon_signs.add(zodiac_position(float(moon_values[0]))["sign"])
+
+    planets["Луна"]["time_uncertainty"] = len(moon_signs) > 1
+    planets["Луна"]["possible_signs"] = sorted(moon_signs)
+
+    return {
+        "calculation": {
+            "local_datetime": local_dt.isoformat(),
+            "utc_datetime": utc_dt.isoformat(),
+            "timezone": timezone_name,
+            "latitude": round(latitude, 6),
+            "longitude": round(longitude, 6),
+            "place": place_display_name or "",
+            "zodiac": "tropical",
+            "house_system": None,
+            "ephemeris": "Swiss Ephemeris / Moshier fallback",
+            "birth_time_known": False,
+        },
+        "angles": {},
+        "planets": planets,
+        "houses": [],
+        "aspects": _calculate_aspects(planets),
+    }
 
 
 def calculate_natal_chart(
