@@ -39,6 +39,22 @@ _PREFIXES = (
 )
 
 
+class LocationNotFoundError(ValueError):
+    """Геокодеры не нашли подходящего места."""
+
+
+class LocationAmbiguousError(ValueError):
+    """Геокодеры нашли несколько правдоподобных мест."""
+
+    def __init__(self, message: str, candidates: list[dict[str, Any]] | None = None):
+        super().__init__(message)
+        self.candidates = candidates or []
+
+
+class LocationServiceError(RuntimeError):
+    """Геокодер временно недоступен или не ответил."""
+
+
 @dataclass
 class LocationCandidate:
     display_name: str
@@ -66,6 +82,12 @@ def _variants(text: str) -> list[str]:
     for value in (original, normalized):
         if value and value not in variants:
             variants.append(value)
+
+    words = normalized.split()
+    if len(words) >= 2:
+        comma_variant = f"{words[0]}, {' '.join(words[1:])}"
+        if comma_variant not in variants:
+            variants.append(comma_variant)
 
     # Убираем служебные типы населённых пунктов, но сохраняем географические
     # уточнения пользователя.
@@ -209,7 +231,7 @@ async def resolve_location(place: str) -> dict[str, Any]:
 
     variants = _variants(place)
     candidates: list[LocationCandidate] = []
-    timeout = aiohttp.ClientTimeout(total=4, connect=2, sock_read=3)
+    timeout = aiohttp.ClientTimeout(total=8, connect=3, sock_read=6)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         # Не бомбим публичный Nominatim параллельными запросами.
@@ -236,7 +258,7 @@ async def resolve_location(place: str) -> dict[str, Any]:
                     break
 
     if not candidates:
-        raise ValueError("Не удалось определить координаты этого места.")
+        raise LocationNotFoundError("Не удалось определить координаты этого места.")
 
     # Дедупликация по координатам.
     unique: dict[tuple[float, float], LocationCandidate] = {}
@@ -251,10 +273,24 @@ async def resolve_location(place: str) -> dict[str, Any]:
 
     # Не выбираем молча случайное место при реально неоднозначном ответе.
     if best.score < 0.58:
-        raise ValueError("Место не удалось определить достаточно точно. Укажите населённый пункт и страну.")
+        raise LocationNotFoundError("Место не удалось определить достаточно точно.")
+
+    query_tokens = _tokens(place)
+    strong = [c for c in ranked if c.score >= max(0.58, best.score - 0.12)]
+    if len(query_tokens) <= 2 and len(strong) >= 2:
+        rows = [{"display_name": c.display_name, "latitude": c.latitude,
+                 "longitude": c.longitude, "timezone": c.timezone,
+                 "confidence": round(c.score, 3)} for c in strong[:5]]
+        raise LocationAmbiguousError(
+            "Найдено несколько населённых пунктов с таким названием.", rows
+        )
+
     if second and best.score < 0.72 and best.score - second.score < 0.07:
-        raise ValueError(
-            "Найдено несколько похожих мест. Укажите населённый пункт и страну точнее."
+        rows = [{"display_name": c.display_name, "latitude": c.latitude,
+                 "longitude": c.longitude, "timezone": c.timezone,
+                 "confidence": round(c.score, 3)} for c in ranked[:5]]
+        raise LocationAmbiguousError(
+            "Найдено несколько похожих мест. Нужен регион или район.", rows
         )
 
     result = {
