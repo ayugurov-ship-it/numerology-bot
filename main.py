@@ -17,7 +17,9 @@ from functools import wraps
 from contextlib import asynccontextmanager
 import contextlib
 
-from natal_engine import calculate_natal_chart, calculate_natal_chart_without_time, geocode_place
+from natal_engine import calculate_natal_chart, calculate_natal_chart_without_time
+from agents.location_agent import resolve_location
+from agents.natal_qa import validate_natal_chart
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -885,7 +887,7 @@ async def natal_full_place_handler(m: Message):
     await m.answer("📍 Определяю координаты и часовой пояс места рождения...")
 
     try:
-        geo = await geocode_place(place)
+        geo = await resolve_location(place)
     except Exception as exc:
         logger.warning("Natal geocoding failed for %s: %s", place, exc)
         await m.answer(
@@ -2097,6 +2099,18 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
             reply_markup=main_menu(user_id),
         )
         return
+
+    qa_errors = validate_natal_chart(chart, birth_time_known=bool(data.get("birth_time")))
+    if qa_errors:
+        logger.error("Natal calculation QA FAILED: %s", " | ".join(qa_errors))
+        await message.answer(
+            "Расчёт прошёл с технической ошибкой проверки данных. Отчёт не формирую, "
+            "чтобы не показывать вам непроверенную карту. Попробуйте ещё раз позже.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+    logger.info("Natal calculation QA OK: planets=%d aspects=%d houses=%d",
+                len(chart.get("planets", {})), len(chart.get("aspects", [])), len(chart.get("houses", [])))
 
     planets_lines = []
     for name, p in chart["planets"].items():
