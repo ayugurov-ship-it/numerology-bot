@@ -10,6 +10,33 @@ from agents.report_qa import validate_report_text
 logger = logging.getLogger(__name__)
 
 
+def _evidence_snapshot(chart: dict[str, Any]) -> str:
+    """Compact source-of-truth used by Judge/Repair to reduce token pressure."""
+    lines = ["ПЛАНЕТЫ:"]
+    for name, value in chart.get("planets", {}).items():
+        if isinstance(value, dict):
+            parts = [str(value.get("formatted", ""))]
+            if value.get("house") is not None:
+                parts.append(f"дом={value['house']}")
+            if value.get("retrograde"):
+                parts.append("ретроградное")
+            if value.get("time_uncertainty"):
+                parts.append(f"неопределённость={','.join(value.get('possible_signs', []))}")
+            lines.append(f"- {name}: " + "; ".join(p for p in parts if p))
+    lines.append("АСПЕКТЫ:")
+    for a in chart.get("aspects", []):
+        lines.append(f"- {a['first']} — {a['aspect']} — {a['second']} (орб {a.get('orb', '')}°)")
+    if chart.get("angles"):
+        lines.append("УГЛЫ:")
+        for key in ("ascendant", "mc"):
+            if chart["angles"].get(key):
+                lines.append(f"- {key}: {chart['angles'][key].get('formatted', '')}")
+    houses = chart.get("houses") or []
+    lines.append("ДОМА: " + ("; ".join(h.get("formatted", "") for h in houses) if houses else "не рассчитаны"))
+    return "\n".join(lines)
+
+
+
 async def generate_verified_report(
     *,
     prompt: str,
@@ -22,7 +49,7 @@ async def generate_verified_report(
 
     Сначала идут детерминированные проверки. Затем независимая по роли
     проверка смысла через отдельный judge-вызов. При ошибке модель получает
-    только конкретные замечания и переписывает отчёт.
+    только конкретные замечания и компактный источник истины, после чего переписывает отчёт.
     """
     report = await ask_groq(prompt, "natal")
 
@@ -40,7 +67,7 @@ async def generate_verified_report(
 Нельзя считать правдой то, чего нет в JSON.
 
 КАРТА:
-{json.dumps(chart, ensure_ascii=False, indent=2)}
+{_evidence_snapshot(chart)}
 
 ОТЧЁТ:
 {report}
@@ -80,7 +107,7 @@ ISSUES: список конкретных проблем; если пробле�
 {chr(10).join('- ' + e for e in hard_errors)}
 
 ИСТОЧНИК ИСТИНЫ — ТОЛЬКО РАССЧИТАННАЯ КАРТА:
-{json.dumps(chart, ensure_ascii=False, indent=2)}
+{_evidence_snapshot(chart)}
 
 Критические правила:
 - Аспекты можно утверждать ТОЛЬКО если exact pair + aspect есть в карте.
