@@ -1196,6 +1196,13 @@ async def about_bot(m: Message):
 
 @router.message(lambda m: is_date(m.text))
 async def date_analysis_handler(m: Message):
+    # Две даты — это запрос на совместимость. Проверяем это ДО обычного
+    # обработчика одной даты, иначе первая дата ошибочно запускает профиль.
+    parts = (m.text or "").strip().split()
+    if len(parts) == 2 and all(is_date(part) for part in parts):
+        await compatibility_analysis_handler(m)
+        return
+
     user_id = m.from_user.id
     date_str, birth_time = parse_date_input(m.text)
     user_history = storage.personalization["user_history"].get(str(user_id), {"actions": []})
