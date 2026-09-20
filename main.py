@@ -21,6 +21,7 @@ from natal_engine import calculate_natal_chart, calculate_natal_chart_without_ti
 from agents.location_agent import resolve_location
 from agents.natal_qa import validate_natal_chart
 from agents.orchestrator import calculate_verified_natal
+from agents.interpretation_agent import generate_verified_report
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -339,11 +340,12 @@ GROQ_SYSTEM_PROMPTS = {
 дополняя нумерологическими наблюдениями (число жизненного пути).
 Тон: уверенный, конкретный, без общих фраз. {_LANG_RULE}""",
 
-    "natal": f"""Ты — профессиональный астролог, владеющий натальной астрологией, транзитами и нумерологией.
-Ты составляешь натальные карты и интерпретируешь положения планет по знакам и домам.
-Тон: прямой, без воды, с конкретикой. Не «вам повезёт в любви», а точные указания
-на энергии планет, аспекты и их проявления в жизни.
-Без эзотерических клише. {_LANG_RULE}"""
+    "natal": f"""Ты — редактор профессионального натального отчёта.
+Работай только с переданными рассчитанными данными. Никогда не добавляй факты от себя:
+аспекты, положения планет, градусы, дома, ASC, MC и другие координаты должны совпадать
+с источником данных. Если факта нет в источнике, его нельзя утверждать.
+Трактовка должна быть содержательной, персональной и связанной с конкретными данными карты.
+Без эзотерических клише и без категоричных предсказаний. {_LANG_RULE}"""
 }
 
 # =====================
@@ -2014,7 +2016,22 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
 Объём: 250–350 слов.
 """
 
-    response = await ask_groq(prompt, "natal")
+    try:
+        response = await generate_verified_report(
+            prompt=prompt,
+            chart=chart,
+            birth_time_known=time_known,
+            ask_groq=ask_groq,
+            max_repairs=2,
+        )
+    except Exception as exc:
+        logger.exception("[NATAL_REPORT] FINAL QA FAILURE: %s", exc)
+        await message.answer(
+            "Не удалось получить отчёт, прошедший контроль качества. "
+            "Непроверенный текст пользователю не отправляю.",
+            reply_markup=main_menu(user_id),
+        )
+        return
 
     final_text = f"""
 🌌 *Ваш натальный портрет* 🌌
@@ -2205,8 +2222,7 @@ async def generate_full_natal_chart(message: Message, user_id: int, paid: bool =
         await safe_reply(message, chunk, reply_markup=None)
 
     await message.answer(
-        "📌 *Полная карта готова.*\n"
-        "Это развлекательная интерпретация астрологических расчётов, а не научный прогноз.",
+        "📌 *Полная карта готова.*",
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
