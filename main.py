@@ -1853,7 +1853,7 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
 """
     paywall = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Получить полную карту — 499 ₽", callback_data="natal_full_buy")]
+            [InlineKeyboardButton(text="💎 Получить полную карту", callback_data="natal_full_buy")]
         ]
     )
     await safe_reply(m, final_text, reply_markup=paywall)
