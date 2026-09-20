@@ -1746,6 +1746,76 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         birth_date=date_str
     )
 
+async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None):
+    user_id = m.from_user.id
+    life_number = NumerologyFeatures.calculate_life_path_number(date_str)
+    zodiac = get_zodiac_sign(date_str)
+    zodiac_name = zodiac["name"] if zodiac else "не определён"
+    zodiac_locative = zodiac["locative"] if zodiac else zodiac_name
+    zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
+    zodiac_element = zodiac["element"] if zodiac else "не определена"
+    today = datetime.now().strftime("%d.%m.%Y")
+
+    time_info = f"Время рождения: {birth_time}" if birth_time else "Время рождения: не указано (Асцендент и дома определить невозможно)"
+    await m.answer("🌌 Составляю вашу натальную карту...")
+
+    prompt = f"""
+Составь натальный портрет для человека. Обращайся на «вы» (НИКОГДА не «он», «она», «его», «её»).
+
+Данные:
+- Дата рождения: {date_str}
+- Знак зодиака: {zodiac_name} (Солнце в {zodiac_locative}, стихия: {zodiac_element})
+- Число жизненного пути: {life_number}
+
+ВАЖНО: ты НЕ имеешь доступа к эфемеридам и НЕ можешь рассчитать реальные положения планет.
+Единственный точный факт — Солнце в {zodiac_locative} (определено по дате рождения).
+НЕ ВЫДУМЫВАЙ конкретные знаки для Луны, Асцендента, Венеры, Марса и других планет.
+Вместо этого описывай общие характеристики через достоверный знак Солнца и число пути.
+
+Формат ответа — ТОЛЬКО эмодзи-разделители, БЕЗ текстовых заголовков, обращение на «вы»:
+
+☀️ — Солнце в {zodiac_locative}: ваши ключевые черты, жизненная цель, способ самовыражения. 3–4 предложения.
+
+🔥 — Стихия {zodiac_element}: как она формирует ваш темперамент, реакции, способ действия. 2–3 предложения.
+
+💞 — Любовь и отношения: стиль привязанности, что цените в партнёре, как проявляете чувства — исходя из качеств знака {zodiac_name}. 2–3 предложения.
+
+💼 — Призвание и карьера: природные таланты, подходящие сферы, стиль работы. 2–3 предложения.
+
+🪐 — Жизненные уроки: главные задачи развития для знака {zodiac_name} с числом пути {life_number}, зоны роста. 2–3 предложения.
+
+🔢 — Число жизненного пути {life_number}: его глубинный смысл и как оно дополняет или корректирует качества знака {zodiac_name}. 2–3 предложения.
+
+⚡ — Сильные стороны и уязвимости: что даёт силу и где важно быть осторожнее. 2–3 предложения.
+
+✨ — Итог: ваша суть в 1–2 предложениях.
+
+Стиль: прямой, конкретный, без воды. Обращение ТОЛЬКО на «вы/ваш/вам».
+
+ЗАПРЕЩЕНО:
+- местоимения «он», «она», «его», «её» — ТОЛЬКО «вы»
+- выдумывать положения планет по знакам (Луна в Овне, Венера в Скорпионе и т.п.)
+- текстовые заголовки разделов
+- англицизмы и транслитерации
+- «вселенная», «карма», «потоки»
+
+Объём: 250–350 слов.
+"""
+
+    response = await ask_groq(prompt, "natal")
+
+    final_text = f"""
+🌌 *Ваша натальная карта* 🌌
+*{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
+{"*Время рождения: " + birth_time + "*" if birth_time else ""}
+
+{response}
+
+📅 *Дата составления:* {today}
+"""
+    await safe_reply(m, final_text, reply_markup=main_menu(user_id))
+    await PersonalizationEngine.update_user_profile(user_id, "natal_chart_generated", {"date": date_str}, birth_date=date_str)
+
 async def daily_card_handler(m: Message, date_str: str):
     user_id = m.from_user.id
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
