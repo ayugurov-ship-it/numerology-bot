@@ -32,6 +32,15 @@ async def run_with_recovery(
             last_errors = errors
             logger.error("[%s] CALCULATION_QA FAILED attempt=%d: %s",
                          stage, attempt, " | ".join(errors))
+            logger.error(
+                "[%s] RESULT SUMMARY: planets=%s aspects=%s houses=%s angles=%s keys=%s",
+                stage,
+                len(result.get("planets", {})) if isinstance(result, dict) else "n/a",
+                len(result.get("aspects", [])) if isinstance(result, dict) else "n/a",
+                len(result.get("houses", [])) if isinstance(result, dict) else "n/a",
+                list(result.get("angles", {}).keys()) if isinstance(result, dict) and isinstance(result.get("angles"), dict) else "n/a",
+                list(result.keys()) if isinstance(result, dict) else "n/a",
+            )
         except Exception as exc:
             last_errors = [f"{type(exc).__name__}: {exc}"]
             logger.exception("[%s] CALCULATION FAILED attempt=%d", stage, attempt)
