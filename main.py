@@ -18,7 +18,12 @@ from contextlib import asynccontextmanager
 import contextlib
 
 from natal_engine import calculate_natal_chart, calculate_natal_chart_without_time
-from agents.location_agent import resolve_location
+from agents.location_agent import (
+    resolve_location,
+    LocationAmbiguousError,
+    LocationNotFoundError,
+    LocationServiceError,
+)
 from agents.natal_qa import validate_natal_chart
 from agents.orchestrator import calculate_verified_natal
 from agents.interpretation_agent import generate_verified_report
@@ -935,11 +940,38 @@ async def natal_full_place_handler(m: Message):
 
     try:
         geo = await resolve_location(place)
-    except Exception as exc:
-        logger.warning("Natal geocoding failed for %s: %s", place, exc)
+    except LocationAmbiguousError as exc:
+        logger.info("Natal geocoding ambiguous for %s: %s; candidates=%s", place, exc, exc.candidates)
         await m.answer(
-            "Не удалось определить это место. Укажите город и страну ещё раз, например: Москва, Россия.",
-            reply_markup=main_menu(user_id)
+            "📍 Нашёл несколько населённых пунктов с таким названием. "
+            "Укажите *область/край/район* — например: «Сафоново, Смоленская область, Россия».",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id),
+        )
+        return
+    except LocationNotFoundError as exc:
+        logger.info("Natal geocoding not found for %s: %s", place, exc)
+        await m.answer(
+            "📍 Не удалось однозначно найти это место. "
+            "Укажите *город, область/край и страну*, например: «Москва, Россия».",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id),
+        )
+        return
+    except LocationServiceError as exc:
+        logger.warning("Natal geocoding service error for %s: %s", place, exc)
+        await m.answer(
+            "📍 Сервис определения координат временно не ответил. "
+            "Попробуйте отправить место ещё раз через несколько секунд.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+    except Exception:
+        logger.exception("Unexpected natal geocoding error for %s", place)
+        await m.answer(
+            "📍 Не удалось определить место из-за технической ошибки. "
+            "Попробуйте ещё раз, указав город и область.",
+            reply_markup=main_menu(user_id),
         )
         return
 
