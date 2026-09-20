@@ -171,4 +171,5 @@ if __name__ == "__main__":
     calendar_patch()
     patch_groq()
     patch_natal_place_message()
-    patch_natal_calculation_diagnostics()
+    # Natal calculation diagnostics are now built into the orchestrator.
+    print("Natal orchestrator/QA diagnostics enabled")
