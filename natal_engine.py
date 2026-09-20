@@ -202,11 +202,16 @@ def calculate_natal_chart_without_time(
     utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
     hour = utc_dt.hour + utc_dt.minute / 60
     jd_ut = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, hour)
+    # Для карты без времени используем встроенный Moshier-расчёт.
+    # Он не зависит от наличия внешних файлов эфемерид .se1 на сервере.
     swe.set_ephe_path("")
 
     planets = {}
     for name, body in PLANETS:
-        values, _ = _calc_planet(jd_ut, body)
+        try:
+            values, _ = swe.calc_ut(jd_ut, body, swe.FLG_MOSEPH | swe.FLG_SPEED)
+        except Exception as exc:
+            raise RuntimeError(f"Не удалось рассчитать {name}: {exc}") from exc
         lon = float(values[0])
         pos = zodiac_position(lon)
         planets[name] = {
