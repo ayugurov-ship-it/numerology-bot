@@ -158,14 +158,23 @@ async def geocode_place(place: str) -> dict[str, Any]:
 
 def _calc_planet(jd_ut: float, body: int):
     """Сначала Swiss Ephemeris, затем встроенный Moshier без файлов .se1."""
+    def normalize(result):
+        # pysweph versions may return (values, retflag) or
+        # (values, retflag, message). Keep the engine version-agnostic.
+        if not isinstance(result, tuple) or len(result) < 2:
+            raise RuntimeError("Swiss Ephemeris returned an unexpected result")
+        values = result[0]
+        retflag = result[1]
+        return values, retflag
+
     flags = swe.FLG_SWIEPH | swe.FLG_SPEED
     try:
-        values, retflag = swe.calc_ut(jd_ut, body, flags)
+        values, retflag = normalize(swe.calc_ut(jd_ut, body, flags))
         if values:
             return values, retflag
     except Exception:
         pass
-    return swe.calc_ut(jd_ut, body, swe.FLG_MOSEPH | swe.FLG_SPEED)
+    return normalize(swe.calc_ut(jd_ut, body, swe.FLG_MOSEPH | swe.FLG_SPEED))
 
 def _calculate_aspects(planets: dict[str, Any]) -> list[dict[str, Any]]:
     aspects = []
@@ -209,7 +218,7 @@ def calculate_natal_chart_without_time(
     planets = {}
     for name, body in PLANETS:
         try:
-            values, _ = swe.calc_ut(jd_ut, body, swe.FLG_MOSEPH | swe.FLG_SPEED)
+            values, _ = _calc_planet(jd_ut, body)
         except Exception as exc:
             raise RuntimeError(f"Не удалось рассчитать {name}: {exc}") from exc
         lon = float(values[0])
