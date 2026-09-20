@@ -16,6 +16,8 @@ from functools import wraps
 from contextlib import asynccontextmanager
 import contextlib
 
+from natal_engine import calculate_natal_chart, geocode_place
+
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -743,24 +745,168 @@ async def show_birth_date_picker(message: Message):
 async def natal_full_buy(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     await callback.answer()
+    stored_date = PersonalizationEngine.get_user_birth_date(user_id)
+
     await PersonalizationEngine.update_user_profile(
         user_id,
         "natal_full_purchase_intent",
+        {"price_rub": 499, "status": "awaiting_birth_time"},
+        birth_date=stored_date
+    )
+
+    if not stored_date:
+        await callback.message.answer(
+            "💎 *Полная натальная карта — 499 ₽*\n\n"
+            "Сначала укажите дату рождения через раздел «🌌 Натальная карта».",
+            parse_mode="Markdown",
+            reply_markup=main_menu(user_id)
+        )
+        return
+
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_waiting_time",
+        {"date": stored_date, "price_rub": 499}
+    )
+    await callback.message.answer(
+        "💎 *Готовим полную натальную карту*\n\n"
+        "Дата рождения: *" + stored_date + "*\n\n"
+        "Шаг 1 из 2 — укажите *точное местное время рождения* в формате ЧЧ:ММ.\n"
+        "Например: 14:35\n\n"
+        "Время важно для Асцендента и домов.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+
+@router.callback_query(lambda c: c.data == "natal_full_test")
+async def natal_full_test(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+    if user_id not in ADMIN_IDS:
+        await callback.message.answer("Эта кнопка доступна только администратору.", reply_markup=main_menu(user_id))
+        return
+    await generate_full_natal_chart(callback.message, user_id, paid=True, test_mode=True)
+
+
+@router.message(lambda m: (
+    bool(m.text)
+    and bool(re.match(r"^([01]\\d|2[0-3]):[0-5]\\d$", m.text.strip()))
+    and any(
+        a.get("action") == "natal_full_waiting_time"
+        for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-3:]
+    )
+))
+async def natal_full_time_handler(m: Message):
+    user_id = m.from_user.id
+    birth_time = m.text.strip()
+    history = storage.personalization["user_history"].get(str(user_id), {})
+    date_str = None
+    for action in reversed(history.get("actions", [])):
+        if action.get("action") in ("natal_full_waiting_time", "natal_full_purchase_intent") and action.get("data", {}).get("date"):
+            date_str = action["data"]["date"]
+            break
+    if not date_str:
+        date_str = PersonalizationEngine.get_user_birth_date(user_id)
+
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_waiting_place",
+        {"date": date_str, "birth_time": birth_time, "price_rub": 499}
+    )
+    await m.answer(
+        "📍 *Шаг 2 из 2*\n\n"
+        "Теперь укажите *место рождения*: город и страну.\n"
+        "Например: Москва, Россия\n\n"
+        "По месту рождения я определю координаты и часовой пояс для расчёта.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+
+
+@router.message(lambda m: (
+    bool(m.text)
+    and not m.text.startswith("/")
+    and any(
+        a.get("action") == "natal_full_waiting_place"
+        for a in storage.personalization["user_history"].get(str(m.from_user.id), {}).get("actions", [])[-2:]
+    )
+))
+async def natal_full_place_handler(m: Message):
+    user_id = m.from_user.id
+    place = m.text.strip()
+    history = storage.personalization["user_history"].get(str(user_id), {})
+    waiting = next(
+        (a for a in reversed(history.get("actions", [])) if a.get("action") == "natal_full_waiting_place"),
+        None
+    )
+    if not waiting:
+        return
+
+    date_str = waiting.get("data", {}).get("date") or PersonalizationEngine.get_user_birth_date(user_id)
+    birth_time = waiting.get("data", {}).get("birth_time")
+    await m.answer("📍 Определяю координаты и часовой пояс места рождения...")
+
+    try:
+        geo = await geocode_place(place)
+    except Exception as exc:
+        logger.warning("Natal geocoding failed for %s: %s", place, exc)
+        await m.answer(
+            "Не удалось определить это место. Укажите город и страну ещё раз, например: Москва, Россия.",
+            reply_markup=main_menu(user_id)
+        )
+        return
+
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_data_collected",
+        {
+            "date": date_str,
+            "birth_time": birth_time,
+            "place": geo["display_name"],
+            "latitude": geo["latitude"],
+            "longitude": geo["longitude"],
+            "timezone": geo["timezone"],
+            "price_rub": 499,
+        }
+    )
+
+    keyboard = [
+        [InlineKeyboardButton(text="💎 Перейти к оплате", callback_data="natal_full_payment")],
+    ]
+    if user_id in ADMIN_IDS:
+        keyboard.append([InlineKeyboardButton(text="🧪 Создать тестовый отчёт", callback_data="natal_full_test")])
+
+    await m.answer(
+        "✅ *Данные для полной карты готовы*\n\n"
+        f"📅 Дата: *{date_str}*\n"
+        f"🕐 Время: *{birth_time}*\n"
+        f"📍 Место: *{geo['display_name']}*\n"
+        f"🌍 Часовой пояс: *{geo['timezone']}*\n"
+        f"🧭 Координаты: {geo['latitude']:.4f}, {geo['longitude']:.4f}\n\n"
+        "После оплаты будет выполнен точный расчёт планет, Асцендента, домов и аспектов, "
+        "а затем AI сформирует персональную расшифровку.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+
+@router.callback_query(lambda c: c.data == "natal_full_payment")
+async def natal_full_payment(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_payment_requested",
         {"price_rub": 499}
     )
     await callback.message.answer(
         "💎 *Полная натальная карта — 499 ₽*\n\n"
-        "В неё войдут расчёты Луны, Асцендента, планет, домов и аспектов "
-        "с последующей персональной расшифровкой.\n\n"
-        "Для точного расчёта понадобятся:\n"
-        "📅 дата рождения\n"
-        "🕐 точное время рождения\n"
-        "📍 место рождения\n\n"
-        "Оплата сейчас находится на этапе подключения. "
-        "Ваш интерес уже зафиксирован.",
+        "Расчёт готов к запуску. Сейчас в боте подключается платёжный модуль Telegram Stars.\n\n"
+        "После оплаты автоматически запустится расчёт и вы получите полный разбор.",
         parse_mode="Markdown",
         reply_markup=main_menu(user_id)
     )
+
 
 @router.callback_query(lambda c: c.data == "birth_noop")
 async def birth_noop(callback: types.CallbackQuery):
@@ -1863,6 +2009,138 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
         {"date": date_str, "full_natal_offer_shown": True},
         birth_date=date_str
     )
+
+async def generate_full_natal_chart(message: Message, user_id: int, paid: bool = False, test_mode: bool = False):
+    """Формирует платный полный натальный отчёт только после успешной оплаты."""
+    if not paid and not test_mode:
+        await message.answer("Для доступа к полной карте сначала требуется оплата.", reply_markup=main_menu(user_id))
+        return
+
+    history = storage.personalization["user_history"].get(str(user_id), {})
+    data = next(
+        (a.get("data", {}) for a in reversed(history.get("actions", [])) if a.get("action") == "natal_full_data_collected"),
+        None
+    )
+    if not data:
+        await message.answer("Не хватает данных рождения. Запустите оформление полной карты ещё раз.", reply_markup=main_menu(user_id))
+        return
+
+    await message.answer("🌌 Рассчитываю полную натальную карту...")
+
+    try:
+        chart = calculate_natal_chart(
+            data["date"],
+            data["birth_time"],
+            float(data["latitude"]),
+            float(data["longitude"]),
+            data["timezone"],
+            data.get("place"),
+        )
+    except Exception as exc:
+        logger.exception("Natal calculation failed: %s", exc)
+        await message.answer(
+            "Не удалось выполнить астрономический расчёт. Данные сохранены, попробуйте ещё раз позже.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
+    planets_lines = []
+    for name, p in chart["planets"].items():
+        retro = " ℞" if p["retrograde"] else ""
+        planets_lines.append(f"• {name}: {p['formatted']}, дом {p['house']}{retro}")
+
+    houses_lines = [f"• {h['house']}-й дом: {h['formatted']}" for h in chart["houses"]]
+    aspects_lines = [
+        f"• {a['first']} — {a['aspect']} — {a['second']} (орб {a['orb']}°)"
+        for a in chart["aspects"]
+    ]
+    if not aspects_lines:
+        aspects_lines = ["• Значимых аспектов по заданным орбам не найдено."]
+
+    chart_json = json.dumps(chart, ensure_ascii=False, indent=2)
+
+    prompt = f"""
+Ты — редактор премиального персонального натального отчёта.
+
+Ниже переданы ТОЛЬКО рассчитанные данные натальной карты. Нельзя менять, додумывать
+или заменять эти положения. Не придумывай отсутствующие аспекты, дома, планеты,
+градусы или события.
+
+Данные рождения:
+{data["date"]} {data["birth_time"]}, {data["place"]}, часовой пояс {data["timezone"]}.
+
+РАССЧИТАННАЯ КАРТА:
+{chart_json}
+
+Сделай глубокую персональную интерпретацию на русском языке, обращаясь только на «вы».
+
+СТРУКТУРА:
+1. Ключевой портрет — Солнце, Луна и Асцендент вместе.
+2. Личное мышление и общение — Меркурий.
+3. Любовь и отношения — Венера, Марс, Луна и 7-й дом.
+4. Работа, деньги и реализация — 2-й, 6-й и 10-й дома, их содержимое и важные аспекты.
+5. Сильные стороны — 5 конкретных качеств, каждое привяжи к данным карты.
+6. Зоны напряжения — 4 конкретных наблюдения без запугивания и категоричных прогнозов.
+7. Ключевые аспекты — объясни наиболее значимые аспекты из переданного списка.
+8. Дома — объясни, какие жизненные сферы особенно выделены расположением планет.
+9. Главный внутренний конфликт или противоречие карты.
+10. Итог — цельная картина и 5 практических рекомендаций.
+
+Правила:
+- Не называй профессии «по судьбе».
+- Не обещай события и не утверждай неизбежность будущего.
+- Не используй слова «карма», «вселенная», «потоки».
+- Не используй англицизмы и транслитерацию.
+- Не упоминай, что расчёт выполняла программа.
+- Не повторяй одну и ту же характеристику в разных разделах.
+- Если аспектов немного, честно работай с теми, что есть.
+- Объём 1200–1600 слов.
+"""
+
+    response = await ask_groq(prompt, "natal")
+    storage.stats["full_natal_reports"] = storage.stats.get("full_natal_reports", 0) + 1
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_generated",
+        {"date": data["date"], "test_mode": test_mode, "price_rub": 499},
+        birth_date=data["date"],
+    )
+
+    header = (
+        "🌌 *ПОЛНАЯ НАТАЛЬНАЯ КАРТА*\n\n"
+        f"📅 {data['date']}  🕐 {data['birth_time']}\n"
+        f"📍 {data['place']}\n"
+        f"🌍 {data['timezone']}\n\n"
+        "*Положения планет:*\n" + "\n".join(planets_lines) +
+        "\n\n*Асцендент:* " + chart["angles"]["ascendant"]["formatted"] +
+        "\n*MC:* " + chart["angles"]["mc"]["formatted"] +
+        "\n\n*Дома:*\n" + "\n".join(houses_lines) +
+        "\n\n*Основные аспекты:*\n" + "\n".join(aspects_lines) +
+        "\n\n━━━━━━━━━━━━━━━━━━━━\n\n" +
+        response
+    )
+
+    chunks = []
+    remaining = header
+    while len(remaining) > 3900:
+        cut = remaining.rfind("\n\n", 0, 3900)
+        if cut < 1500:
+            cut = 3900
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+
+    for chunk in chunks:
+        await safe_reply(message, chunk, reply_markup=None)
+
+    await message.answer(
+        "📌 *Полная карта готова.*\n"
+        "Это развлекательная интерпретация астрологических расчётов, а не научный прогноз.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+
 
 async def daily_card_handler(m: Message, date_str: str):
     user_id = m.from_user.id
