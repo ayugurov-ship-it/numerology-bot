@@ -739,6 +739,29 @@ async def show_birth_date_picker(message: Message):
     )
 
 
+@router.callback_query(lambda c: c.data == "natal_full_buy")
+async def natal_full_buy(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_full_purchase_intent",
+        {"price_rub": 499}
+    )
+    await callback.message.answer(
+        "💎 *Полная натальная карта — 499 ₽*\n\n"
+        "В неё войдут расчёты Луны, Асцендента, планет, домов и аспектов "
+        "с последующей персональной расшифровкой.\n\n"
+        "Для точного расчёта понадобятся:\n"
+        "📅 дата рождения\n"
+        "🕐 точное время рождения\n"
+        "📍 место рождения\n\n"
+        "Оплата сейчас находится на этапе подключения. "
+        "Ваш интерес уже зафиксирован.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(user_id)
+    )
+
 @router.callback_query(lambda c: c.data == "birth_noop")
 async def birth_noop(callback: types.CallbackQuery):
     await callback.answer()
@@ -1812,9 +1835,34 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
 {response}
 
 📅 *Дата составления:* {today}
+
+💎 *Хотите полную натальную карту?*
+
+Натальный портрет выше — это анализ по дате рождения.
+Полная карта требует *точного времени и места рождения* и позволяет отдельно рассчитать:
+🌙 Луну
+⬆️ Асцендент
+☿ Меркурий
+♀ Венеру
+♂ Марс
+♃ Юпитер и ♄ Сатурн
+🏠 дома
+⚡ аспекты между планетами
+
+После расчёта эти данные можно отдельно разобрать по отношениям, карьере, деньгам и ключевым жизненным темам.
 """
-    await safe_reply(m, final_text, reply_markup=main_menu(user_id))
-    await PersonalizationEngine.update_user_profile(user_id, "natal_chart_generated", {"date": date_str}, birth_date=date_str)
+    paywall = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Получить полную карту — 499 ₽", callback_data="natal_full_buy")]
+        ]
+    )
+    await safe_reply(m, final_text, reply_markup=paywall)
+    await PersonalizationEngine.update_user_profile(
+        user_id,
+        "natal_chart_generated",
+        {"date": date_str, "full_natal_offer_shown": True},
+        birth_date=date_str
+    )
 
 async def daily_card_handler(m: Message, date_str: str):
     user_id = m.from_user.id
