@@ -30,6 +30,7 @@ from agents.interpretation_agent import generate_verified_report
 from agents.forecast_engine import calculate_daily_sky, calculate_personal_day, build_period_sky_summary
 from agents.forecast_agent import build_forecast_plan, render_forecast_context
 from agents.forecast_qa import validate_forecast
+from payments.crypto_pay import create_test_invoice, get_invoice, get_me, CryptoPayError
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -1026,6 +1027,63 @@ async def natal_full_place_handler(m: Message):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
+
+@router.message(Command("testpay"))
+async def testpay_handler(m: Message):
+    """Create a Crypto Pay testnet invoice and verify payment automatically."""
+    user_id = m.from_user.id
+
+    try:
+        app_info = await get_me()
+        invoice = await create_test_invoice("1", user_id)
+    except CryptoPayError as exc:
+        logger.exception("[CRYPTO_PAY_TEST] create invoice failed: %s", exc)
+        await m.answer("❌ Не удалось создать тестовый счёт Crypto Pay. Проверьте тестовый API-токен в Render.")
+        return
+
+    invoice_id = int(invoice["invoice_id"])
+    pay_url = invoice.get("bot_invoice_url") or invoice.get("mini_app_invoice_url")
+    if not pay_url:
+        await m.answer("❌ Crypto Pay не вернул ссылку на оплату.")
+        return
+
+    app_name = app_info.get("name", "SoulCode Test")
+    await m.answer(
+        "🧪 *Тестовая оплата Crypto Pay*\n\n"
+        + f"Приложение: *{app_name}*\n"
+        + "Сумма: *1 USDT* (тестовые монеты)\n\n"
+        + "Нажмите кнопку ниже и оплатите счёт тестовыми USDT.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить 1 USDT", url=pay_url)]
+        ])
+    )
+
+    async def watch_payment():
+        for attempt in range(1, 121):
+            try:
+                current = await get_invoice(invoice_id)
+                status = current.get("status")
+                logger.info("[CRYPTO_PAY_TEST] invoice=%s status=%s attempt=%s", invoice_id, status, attempt)
+                if status == "paid":
+                    await bot.send_message(
+                        user_id,
+                        "✅ *Тестовая оплата получена!*\n\n"
+                        + f"Invoice: {invoice_id}\n"
+                        + "Связка Telegram → Crypto Pay → Render работает.",
+                        parse_mode="Markdown"
+                    )
+                    return
+                if status == "expired":
+                    await bot.send_message(user_id, "⌛ Тестовый счёт истёк. Запустите /testpay ещё раз.")
+                    return
+            except Exception as exc:
+                logger.warning("[CRYPTO_PAY_TEST] invoice=%s check failed: %s", invoice_id, exc)
+            await asyncio.sleep(5)
+
+        await bot.send_message(user_id, "⌛ Я не получил подтверждение оплаты за 10 минут. Если вы оплатили счёт, проверьте статус в Crypto Pay.")
+
+    asyncio.create_task(watch_payment())
 
 @router.callback_query(lambda c: c.data == "natal_full_payment")
 async def natal_full_payment(callback: types.CallbackQuery):
