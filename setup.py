@@ -326,9 +326,7 @@ def _forecast_patch_marker():
     marker = 'if __name__ == "__main__":'
     if marker not in source:
         raise RuntimeError("main entry point not found in main.py")
-    source = source.replace(marker, injected + "
-
-" + marker, 1)
+    source = source.replace(marker, injected + "\\n\\n" + marker, 1)
 
     MAIN.write_text(source, encoding="utf-8")
     py_compile.compile(str(MAIN), doraise=True)
