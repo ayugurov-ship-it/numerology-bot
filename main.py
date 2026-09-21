@@ -1863,6 +1863,7 @@ async def compatibility_analysis_handler(m: Message):
     await safe_reply(m, final_response, reply_markup=main_menu(user_id))
     await PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
 
+# === FORECAST AGENT PIPELINE V1 ===
 async def horoscope_handler(m: Message, date_str: str, last_action: str):
     """Профессиональный прогноз: расчёт -> отбор факторов -> LLM -> детерминированный QA."""
     user_id = m.from_user.id
