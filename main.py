@@ -619,6 +619,7 @@ async def _ask_groq_request(prompt: str, system_prompt_key: str = "default") -> 
             900 if system_prompt_key == "natal_qa"
             else 1800 if system_prompt_key == "natal_repair"
             else 2200 if system_prompt_key == "natal"
+            else 1600 if system_prompt_key == "horoscope"
             else 2800
         ),
         "reasoning_effort": "low",
