@@ -28,6 +28,8 @@ from agents.natal_qa import validate_natal_chart
 from agents.orchestrator import calculate_verified_natal
 from agents.interpretation_agent import generate_verified_report
 from agents.forecast_engine import calculate_daily_sky, calculate_personal_day, build_period_sky_summary
+from agents.forecast_agent import build_forecast_plan, render_forecast_context
+from agents.forecast_qa import validate_forecast
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -1862,58 +1864,42 @@ async def compatibility_analysis_handler(m: Message):
     await PersonalizationEngine.update_user_profile(user_id, "compatibility_analysis", {"dates": [date1, date2]})
 
 async def horoscope_handler(m: Message, date_str: str, last_action: str):
+    """Профессиональный прогноз: расчёт -> отбор факторов -> LLM -> детерминированный QA."""
     user_id = m.from_user.id
 
-    if "_" in last_action:
-        h_type = last_action.split("_")[1]
-    else:
+    h_type = last_action.split("_", 1)[1] if "_" in last_action else "today"
+    if h_type not in {"today", "tomorrow", "week", "month"}:
         h_type = "today"
 
     type_names = {
         "today": "сегодня",
         "tomorrow": "завтра",
         "week": "неделю",
-        "month": "месяц"
+        "month": "месяц",
     }
-
-    period_display = type_names.get(h_type, "сегодня")
-    today = datetime.now(ZoneInfo("Europe/Moscow")).date()
+    period_display = type_names[h_type]
+    tz_name = "Europe/Moscow"
+    today = datetime.now(ZoneInfo(tz_name)).date()
 
     if h_type == "today":
-        target_date_start = today
-        target_date_end = today
-        date_description = today.strftime("%d.%m.%Y")
+        start = end = today
     elif h_type == "tomorrow":
-        target_date_start = today + timedelta(days=1)
-        target_date_end = target_date_start
-        date_description = target_date_start.strftime("%d.%m.%Y")
+        start = end = today + timedelta(days=1)
     elif h_type == "week":
-        target_date_start = today
-        target_date_end = today + timedelta(days=6)
-        date_description = (
-            f"{target_date_start.strftime('%d.%m.%Y')} – "
-            f"{target_date_end.strftime('%d.%m.%Y')}"
-        )
-    elif h_type == "month":
-        target_date_start = today.replace(day=1)
-        if target_date_start.month == 12:
-            target_date_end = target_date_start.replace(
-                year=target_date_start.year + 1, month=1, day=1
-            ) - timedelta(days=1)
-        else:
-            target_date_end = target_date_start.replace(
-                month=target_date_start.month + 1, day=1
-            ) - timedelta(days=1)
-        date_description = (
-            f"{target_date_start.strftime('%d.%m.%Y')} – "
-            f"{target_date_end.strftime('%d.%m.%Y')}"
-        )
+        start = today
+        end = today + timedelta(days=6)
     else:
-        h_type = "today"
-        target_date_start = today
-        target_date_end = today
-        period_display = "сегодня"
-        date_description = today.strftime("%d.%m.%Y")
+        start = today.replace(day=1)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            end = start.replace(month=start.month + 1, day=1) - timedelta(days=1)
+
+    date_description = (
+        start.strftime("%d.%m.%Y")
+        if start == end
+        else f"{start.strftime('%d.%m.%Y')} – {end.strftime('%d.%m.%Y')}"
+    )
 
     await m.answer(f"🔮 Создаю гороскоп на {period_display}...")
 
@@ -1926,178 +1912,172 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     zodiac_emoji = zodiac["emoji"] if zodiac else "🔮"
     zodiac_element = zodiac["element"] if zodiac else "не определена"
 
-    period_header = f"{period_display.capitalize()} ({date_description})"
-    start_str = target_date_start.strftime("%d.%m.%Y")
-    end_str = target_date_end.strftime("%d.%m.%Y")
+    start_str = start.strftime("%d.%m.%Y")
+    end_str = end.strftime("%d.%m.%Y")
 
-    if h_type in ["today", "tomorrow"]:
-        period_number = NumerologyFeatures.calculate_calendar_day_number(start_str)
-    elif h_type == "week":
-        period_number = NumerologyFeatures.calculate_period_number(start_str, end_str)
-    else:
-        period_number = NumerologyFeatures.calculate_month_period_number(start_str)
-
-    # Реальный астрологический фон: Swiss Ephemeris, без генерации планет моделью.
-    sky = None
-    personal_day = None
-    sky_context = ""
-    if h_type in ["today", "tomorrow"]:
-        sky = calculate_daily_sky(start_str, "Europe/Moscow")
+    if h_type in {"today", "tomorrow"}:
+        sky = calculate_daily_sky(start_str, tz_name)
         personal_day = calculate_personal_day(date_str, start_str)
-
-        selected = ["Солнце", "Луна", "Меркурий", "Венера", "Марс",
-                    "Юпитер", "Сатурн", "Уран", "Нептун", "Плутон"]
-        position_lines = []
-        for planet in selected:
-            p = sky["positions"][planet]
-            retro = " ℞" if p["retrograde"] else ""
-            position_lines.append(f"- {planet}: {p['degree']:.1f}° {p['sign']}{retro}")
-
-        aspect_lines = [
-            f"- {a['first']} — {a['aspect']} — {a['second']} (орб {a['orb']}°)"
-            for a in sky["aspects"][:5]
-        ]
-        ingress_lines = [
-            f"- {i['planet']}: {i['from_sign']} → {i['to_sign']} в {i['local_time']} по Москве"
-            for i in sky["ingresses"]
-        ]
-
-        sky_context = f"""
-РЕАЛЬНЫЕ АСТРОЛОГИЧЕСКИЕ ДАННЫЕ, РАССЧИТАННЫЕ SWISS EPHEMERIS:
-Положения на расчётный момент:
-{chr(10).join(position_lines)}
-
-Лунный фон:
-- Фаза: {sky['phase']['name']}
-- Освещённость: {sky['phase']['illumination_percent']}%
-- Угол Луны от Солнца: {sky['phase']['separation']}°
-
-Ближайшие значимые аспекты:
-{chr(10).join(aspect_lines) if aspect_lines else "- нет"}
-
-Переходы планет в течение суток:
-{chr(10).join(ingress_lines) if ingress_lines else "- нет"}
-
-Личная нумерология:
-- Личный год: {personal_day['personal_year']}
-- Личный месяц: {personal_day['personal_month']}
-- Личный день: {personal_day['personal_day']}
-
-Это единственный источник астрологических фактов. Ничего астрономического не придумывай.
-"""
+        plan = build_forecast_plan(
+            sky=sky,
+            period=h_type,
+            zodiac_name=zodiac_name,
+            life_number=life_number,
+            personal_day=personal_day,
+        )
+        context = render_forecast_context(plan)
+        number_label = "личный день"
+        number_value = personal_day["personal_day"]
     else:
-        events = build_period_sky_summary(start_str, end_str, "Europe/Moscow")
-        sky_context = """
-РЕАЛЬНЫЕ АСТРОЛОГИЧЕСКИЕ СОБЫТИЯ ПЕРИОДА, РАССЧИТАННЫЕ SWISS EPHEMERIS:
-""" + "\n".join(
-            f"- {e['date']}: {e['text']}" for e in events
-        ) + """
-Используй только эти события. Не придумывай дополнительные транзиты, аспекты или даты.
-"""
+        events = build_period_sky_summary(start_str, end_str, tz_name, max_events=12)
+        plan = {
+            "period": h_type,
+            "date": date_description,
+            "zodiac": zodiac_name,
+            "life_number": life_number,
+            "events": events,
+            "source": "Swiss Ephemeris / Moshier fallback",
+        }
+        context = (
+            "РАССЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА. ИСПОЛЬЗУЙ ТОЛЬКО ИХ.\n"
+            + "\n".join(f"- {e['date']}: {e['text']}" for e in events)
+        )
+        if h_type == "week":
+            number_value = NumerologyFeatures.calculate_period_number(start_str, end_str)
+            number_label = "число недели"
+        else:
+            number_value = NumerologyFeatures.calculate_month_period_number(start_str)
+            number_label = "число месяца"
 
-    if h_type in ["today", "tomorrow"]:
+    if h_type in {"today", "tomorrow"}:
         prompt = f"""
-Ты — профессиональный астро-нумеролог-консультант.
+Ты — редактор персонального астрологического прогноза.
 
-Создай персональный прогноз на {period_header} для человека, родившегося {date_str}.
-Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'}.
-Число периода: {period_number}.
+Период: {period_display} ({date_description})
+Дата рождения: {date_str}
+Знак: {zodiac_name} (стихия: {zodiac_element})
+Число жизненного пути: {life_number if life_number else "не определено"}
 
-ВАЖНО:
-- Это развлекательная интерпретация, а не научное предсказание будущего.
-- Астрологические факты бери ТОЛЬКО из блока «РЕАЛЬНЫЕ АСТРОЛОГИЧЕСКИЕ ДАННЫЕ».
-- Не выдумывай положения планет, аспекты, фазы Луны или переходы.
-- Выбери 2–4 наиболее значимых астрологических фактора и объясни их применительно к знаку {zodiac_name}.
-- Луна и её фаза должны быть учтены отдельно.
-- Нумерология — второй слой, а не замена астрологии.
-- Не утверждай конкретные события и результаты как неизбежные.
-{sky_context}
+{context}
 
-Формат — ТОЛЬКО эмодзи-разделители, без текстовых заголовков:
-🌅 — главный фон дня: 2–3 предложения с конкретной астрологической опорой.
-🌙 — Луна: её знак, фаза и практический эмоциональный ритм дня, 2 предложения.
-💼 — работа и дела: 2–3 конкретных предложения.
-💬 — отношения и общение: 2 предложения.
-⚡ — одна зона напряжения и способ её снизить.
-🔢 — личное число дня {personal_day['personal_day']}: практическое применение сегодня.
-💡 — один практический шаг до конца дня.
+КРИТИЧЕСКИЕ ПРАВИЛА:
+1. Положение планеты в знаке — это только положение. Оно НЕ является аспектом.
+2. Называть аспект можно только в точной паре планет, которая есть в блоке «РАССЧИТАННЫЕ АСПЕКТЫ».
+3. Не соединяйте два независимых положения словами «создают напряжение», если между ними нет рассчитанного аспекта.
+4. Луна должна быть отдельной частью прогноза: знак + фаза.
+5. Если есть переход планеты в другой знак, используйте его как отдельное событие и не смешивайте с аспектом.
+6. Не утверждайте неизбежные события. Используйте «может», «вероятно», «стоит обратить внимание».
+7. Нумерология — вспомогательный слой. Не заменяйте ею астрологические факторы.
+8. Не используйте слово «сегодня» в прогнозе на завтра, кроме явного сравнения «в отличие от сегодня».
+9. Не добавляйте факты, которых нет в расчётном блоке.
+10. Это развлекательная интерпретация, а не научное предсказание.
+
+Формат — только эти эмодзи-разделители, без текстовых заголовков:
+🌅 — главный фон дня, 2–3 предложения.
+🌙 — Луна: знак, фаза и эмоциональный ритм, 2 предложения.
+💼 — работа и дела, 2–3 предложения.
+💬 — отношения и общение, 2 предложения.
+⚡ — одна зона напряжения и практичный способ её снизить.
+🔢 — {number_label} {number_value}: практическое применение.
+💡 — один практический шаг на {period_display}.
 ✨ — итог одним предложением.
 
-Объём: 180–230 слов.
+Объём: 170–220 слов.
 Обращение только на «вы».
 Не используй англицизмы, транслитерацию, слова «карма», «вселенная», «потоки».
 """
     elif h_type == "week":
         prompt = f"""
-Ты — профессиональный астро-нумеролог-консультант.
+Ты — редактор персонального астрологического прогноза на неделю {date_description}.
+Дата рождения: {date_str}
+Знак: {zodiac_name} (стихия: {zodiac_element})
+Число жизненного пути: {life_number if life_number else "не определено"}
 
-Создай персональный прогноз на неделю {date_description} для человека, родившегося {date_str}.
-Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'}.
-Число недели: {period_number}.
+{context}
 
-ВАЖНО:
-- Это развлекательная интерпретация, а не научное предсказание будущего.
-- Используй ТОЛЬКО реальные события из блока «РЕАЛЬНЫЕ АСТРОЛОГИЧЕСКИЕ СОБЫТИЯ ПЕРИОДА».
-- Не придумывай дополнительные транзиты, аспекты или даты.
-- Не назначай даты гарантированно удачными, денежными или судьбоносными.
-- Покажи, как астрологическая динамика периода сочетается со знаком и числом жизненного пути.
-{sky_context}
+Используй только рассчитанные события. Не придумывай транзиты, аспекты и даты.
+Разделяй положение планеты и аспект: положение само по себе не означает напряжение или гармонию.
+Если событие не подтверждено расчётом, не называй его.
+Не обещай конкретный результат. Используй вероятностные формулировки.
 
-Формат — ТОЛЬКО эмодзи-разделители:
-🌟 — главный вектор недели: какой вопрос стоит держать в центре внимания, 2–3 предложения.
-📅 — начало недели: что лучше запустить, организовать или прояснить.
-📅 — середина недели: где потребуется корректировка или проверка результата.
-📅 — конец недели: что стоит завершить, закрепить или отложить.
-💼 — работа и деньги: распределение усилий на неделю, без обещаний дохода.
-💬 — отношения и общение: как выстраивать договорённости в течение недели.
-⚡ — один повторяющийся риск недели и способ его снизить.
-💡 — стратегия недели в виде одного правила.
-🎯 — число недели {period_number}: его практический смысл в контексте всей недели.
+Формат — только эмодзи-разделители:
+🌟 — главный вектор недели, 2–3 предложения.
+📅 — начало недели.
+📅 — середина недели.
+📅 — конец недели.
+💼 — работа и деньги.
+💬 — отношения и общение.
+⚡ — один повторяющийся риск и способ его снизить.
+💡 — одна стратегия недели.
+🎯 — число недели {number_value}.
 ✨ — итог недели.
 
-Если в расчётных событиях есть конкретная дата, можно использовать её как опорную точку прогноза.
-Объём: 230–280 слов.
-Обращение только на «вы».
+Объём: 220–270 слов. Только литературный русский, обращение на «вы».
 Не используй англицизмы, транслитерацию, слова «карма», «вселенная», «потоки».
 """
     else:
         prompt = f"""
-Ты — профессиональный астро-нумеролог-консультант.
+Ты — редактор персонального астрологического прогноза на месяц {date_description}.
+Дата рождения: {date_str}
+Знак: {zodiac_name} (стихия: {zodiac_element})
+Число жизненного пути: {life_number if life_number else "не определено"}
 
-Создай персональный прогноз на месяц {date_description} для человека, родившегося {date_str}.
-Знак зодиака: {zodiac_name} (стихия: {zodiac_element}).
-Число жизненного пути: {life_number if life_number else 'не определено'}.
-Число месяца: {period_number}.
+{context}
 
-ВАЖНО:
-- Это развлекательная интерпретация, а не научное предсказание будущего.
-- Используй ТОЛЬКО реальные события из блока «РЕАЛЬНЫЕ АСТРОЛОГИЧЕСКИЕ СОБЫТИЯ ПЕРИОДА».
-- Не придумывай дополнительные транзиты, аспекты или даты.
-- Не обещай конкретные события и результаты.
-- Покажи, как динамика периода сочетается со знаком и числом жизненного пути.
-{sky_context}
+Используй только рассчитанные события. Не придумывай транзиты, аспекты и даты.
+Разделяй положение планеты и аспект: положение само по себе не означает напряжение или гармонию.
+Не обещай конкретные результаты и не делай категоричных предсказаний.
 
-Формат — ТОЛЬКО эмодзи-разделители:
-🌟 — главный вектор месяца: одна тема, вокруг которой стоит строить решения.
-📅 — первая треть месяца: что начать и какие основания заложить.
-📅 — вторая треть месяца: что проверить, скорректировать или развить.
-📅 — последняя треть месяца: что завершить и какие выводы зафиксировать.
-💼 — работа и деньги: приоритеты, распределение ресурсов и контроль результата; без обещаний дохода.
-💬 — отношения и общение: какие договорённости и границы требуют внимания.
-⚡ — системный риск месяца: что может мешать результату при повторении.
-💡 — одна стратегия на месяц, которую можно проверить на практике.
-🎯 — число месяца {period_number}: как использовать его как смысловую рамку месяца.
+Формат — только эмодзи-разделители:
+🌟 — главный вектор месяца.
+📅 — первая треть месяца.
+📅 — вторая треть месяца.
+📅 — последняя треть месяца.
+💼 — работа и деньги.
+💬 — отношения и общение.
+⚡ — системный риск и способ его снизить.
+💡 — одна стратегия месяца.
+🎯 — число месяца {number_value}.
 ✨ — итог месяца.
 
-Если в расчётных событиях есть конкретная дата, можно использовать её как опорную точку прогноза.
-Объём: 250–300 слов.
-Обращение только на «вы».
+Объём: 240–290 слов. Только литературный русский, обращение на «вы».
 Не используй англицизмы, транслитерацию, слова «карма», «вселенная», «потоки».
 """
 
     response = await ask_groq(prompt, "horoscope")
+
+    if h_type in {"today", "tomorrow"}:
+        qa = validate_forecast(response, plan, h_type)
+        if not qa["pass"]:
+            logger.warning("FORECAST QA FAIL: period=%s issues=%s", h_type, qa["issues"])
+            repair_prompt = f"""
+Исправьте следующий астрологический прогноз без переписывания с нуля.
+Уберите ТОЛЬКО фактические ошибки, перечисленные ниже.
+РАСЧЁТНЫЕ ДАННЫЕ:
+{context}
+
+ОШИБКИ QA:
+{chr(10).join("- " + x for x in qa["issues"])}
+
+ТЕКСТ:
+{response}
+
+Верните только исправленный текст в том же формате эмодзи-разделителей.
+Не добавляйте новых астрологических фактов.
+"""
+            try:
+                repaired = await ask_groq(repair_prompt, "horoscope")
+                repaired_qa = validate_forecast(repaired, plan, h_type)
+                if repaired_qa["pass"]:
+                    response = repaired
+                    logger.info("FORECAST QA PASS after repair")
+                else:
+                    logger.error("FORECAST QA FAIL after repair: %s", repaired_qa["issues"])
+            except Exception:
+                logger.exception("FORECAST repair failed; keeping first response")
+        else:
+            logger.info("FORECAST QA PASS: period=%s", h_type)
+
     final_text = f"""
 🔮 *Ваш гороскоп* 🔮
 *{zodiac_emoji} {zodiac_name} | Число пути: {life_number}*
@@ -2108,10 +2088,9 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     await PersonalizationEngine.update_user_profile(
         user_id,
         "horoscope_generated",
-        {"date": date_str, "period": h_type},
+        {"date": date_str, "period": h_type, "forecast_qa": "passed_or_logged"},
         birth_date=date_str
     )
-
 async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None):
     user_id = m.from_user.id
     life_number = NumerologyFeatures.calculate_life_path_number(date_str)
