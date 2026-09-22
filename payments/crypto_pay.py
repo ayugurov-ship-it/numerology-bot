@@ -5,26 +5,45 @@ from typing import Optional
 TESTNET_API_TOKEN = os.getenv("CRYPTO_PAY_TESTNET_API_TOKEN")
 TESTNET_API_URL = "https://testnet-pay.crypt.bot/api"
 
+
 class CryptoPayError(RuntimeError):
     pass
+
 
 async def _api_request(method: str, payload: Optional[dict] = None) -> dict:
     if not TESTNET_API_TOKEN:
         raise CryptoPayError("CRYPTO_PAY_TESTNET_API_TOKEN is not configured")
-    headers = {"Crypto-Pay-API-Token": TESTNET_API_TOKEN, "Content-Type": "application/json"}
+
+    headers = {
+        "Crypto-Pay-API-Token": TESTNET_API_TOKEN,
+        "Content-Type": "application/json",
+    }
     timeout = aiohttp.ClientTimeout(total=20)
+
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(f"{TESTNET_API_URL}/{method}", headers=headers, json=payload or {}) as response:
+        async with session.post(
+            f"{TESTNET_API_URL}/{method}",
+            headers=headers,
+            json=payload or {},
+        ) as response:
             text = await response.text()
+
             if response.status != 200:
                 raise CryptoPayError(f"HTTP {response.status}: {text[:500]}")
+
             data = await response.json()
+
             if not data.get("ok"):
-                raise CryptoPayError(f"Crypto Pay {method} failed: {data.get('error', 'unknown error')}")
+                raise CryptoPayError(
+                    f"Crypto Pay {method} failed: {data.get('error', 'unknown error')}"
+                )
+
             return data.get("result") or {}
+
 
 async def get_me() -> dict:
     return await _api_request("getMe")
+
 
 async def create_test_invoice(amount: str = "1", user_id: Optional[int] = None) -> dict:
     payload = {
@@ -40,8 +59,23 @@ async def create_test_invoice(amount: str = "1", user_id: Optional[int] = None) 
     }
     return await _api_request("createInvoice", payload)
 
+
 async def get_invoice(invoice_id: int) -> dict:
-    result = await _api_request("getInvoices", {"invoice_ids": str(invoice_id), "count": 1})
-    if not result:
+    result = await _api_request(
+        "getInvoices",
+        {"invoice_ids": str(invoice_id), "count": 1},
+    )
+
+    # Crypto Pay returns getInvoices result as an object:
+    # {"count": N, "items": [invoice, ...]}.
+    # The previous code treated result as a list and failed with KeyError(0).
+    items = result.get("items") if isinstance(result, dict) else None
+
+    if not items:
         raise CryptoPayError(f"Invoice {invoice_id} not found")
-    return result[0]
+
+    invoice = items[0]
+    if not isinstance(invoice, dict):
+        raise CryptoPayError(f"Invalid invoice payload for {invoice_id}: {invoice!r}")
+
+    return invoice
