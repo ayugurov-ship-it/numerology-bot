@@ -833,13 +833,13 @@ async def natal_full_buy(callback: types.CallbackQuery):
     await PersonalizationEngine.update_user_profile(
         user_id,
         "natal_full_purchase_intent",
-        {"price_rub": 499,\n            "stars": NATAL_FULL_STARS, "status": "awaiting_birth_time"},
+        {"price_rub": 499, "stars": NATAL_FULL_STARS, "status": "awaiting_birth_time"},
         birth_date=stored_date
     )
 
     if not stored_date:
         await callback.message.answer(
-            "💎 *Полная натальная карта — 499 ₽*\n\n"
+            "💎 *Полная натальная карта — {NATAL_FULL_STARS} Stars*\n\n"
             "Сначала укажите дату рождения через раздел «🌌 Натальный портрет»",
             parse_mode="Markdown",
             reply_markup=main_menu(user_id)
