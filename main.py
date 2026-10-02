@@ -16,6 +16,7 @@ import time
 from functools import wraps
 from contextlib import asynccontextmanager
 import contextlib
+from uuid import uuid4
 
 from natal_engine import calculate_natal_chart, calculate_natal_chart_without_time
 from agents.location_agent import (
@@ -75,6 +76,8 @@ WEBHOOK_PATH = "/webhook"
 ADMIN_PATH = "/admin"
 PORT = int(os.getenv("PORT", 8000))
 USE_POLLING = os.getenv("USE_POLLING", "false").lower() == "true"
+# Telegram Stars price for the full natal chart. XTR = Telegram Stars.
+NATAL_FULL_STARS = int(os.getenv("NATAL_FULL_STARS", "499"))
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -193,6 +196,14 @@ class Storage:
         )
 
 storage = Storage()
+
+def _payment_orders() -> Dict[str, Dict[str, Any]]:
+    """Persistent payment orders keyed by Telegram invoice payload."""
+    return storage.personalization.setdefault("payment_orders", {})
+
+async def _save_payment_order(payload: str, order: Dict[str, Any]) -> None:
+    _payment_orders()[payload] = order
+    await storage.save_all(force=True)
 
 # =====================
 # FASTAPI APP WITH LIFESPAN
@@ -822,7 +833,7 @@ async def natal_full_buy(callback: types.CallbackQuery):
     await PersonalizationEngine.update_user_profile(
         user_id,
         "natal_full_purchase_intent",
-        {"price_rub": 499, "status": "awaiting_birth_time"},
+        {"price_rub": 499,\n            "stars": NATAL_FULL_STARS, "status": "awaiting_birth_time"},
         birth_date=stored_date
     )
 
@@ -1007,7 +1018,7 @@ async def natal_full_place_handler(m: Message):
     )
 
     keyboard = [
-        [InlineKeyboardButton(text="💎 Перейти к оплате", callback_data="natal_full_payment")],
+        [InlineKeyboardButton(text=f"⭐ Оплатить {NATAL_FULL_STARS} Stars", callback_data="natal_full_payment")],
     ]
     if user_id in ADMIN_IDS:
         keyboard.append([InlineKeyboardButton(text="🧪 Создать тестовый отчёт", callback_data="natal_full_test")])
@@ -1089,17 +1100,200 @@ async def testpay_handler(m: Message):
 async def natal_full_payment(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     await callback.answer()
+
+    history = storage.personalization["user_history"].get(str(user_id), {})
+    data = next(
+        (a.get("data", {}) for a in reversed(history.get("actions", []))
+         if a.get("action") == "natal_full_data_collected"),
+        None
+    )
+    if not data:
+        await callback.message.answer(
+            "Не хватает данных для оплаты. Пожалуйста, заново оформите полную натальную карту.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
+    payload = f"natal_full:{user_id}:{uuid4().hex}"
+    order = {
+        "user_id": user_id,
+        "product": "natal_full",
+        "currency": "XTR",
+        "amount": NATAL_FULL_STARS,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+        "telegram_payment_charge_id": None,
+        "data": data,
+    }
+    await _save_payment_order(payload, order)
+
+    try:
+        await bot.send_invoice(
+            chat_id=user_id,
+            title="Полная натальная карта",
+            description="Персональный натальный отчёт с расчётом планет, аспектов и домов.",
+            payload=payload,
+            currency="XTR",
+            prices=[
+                types.LabeledPrice(
+                    label="Полная натальная карта",
+                    amount=NATAL_FULL_STARS,
+                )
+            ],
+        )
+        await PersonalizationEngine.update_user_profile(
+            user_id,
+            "natal_full_payment_requested",
+            {"stars": NATAL_FULL_STARS, "payload": payload}
+        )
+        logger.info(
+            "[STARS] invoice sent user=%s payload=%s amount=%s XTR",
+            user_id, payload, NATAL_FULL_STARS
+        )
+    except Exception as exc:
+        _payment_orders().pop(payload, None)
+        await storage.save_all(force=True)
+        logger.exception("[STARS] send invoice failed user=%s: %s", user_id, exc)
+        await callback.message.answer(
+            "❌ Не удалось создать счёт Telegram Stars. Попробуйте ещё раз.",
+            reply_markup=main_menu(user_id),
+        )
+
+
+@router.pre_checkout_query()
+async def stars_pre_checkout(pre_checkout_query: types.PreCheckoutQuery):
+    payload = pre_checkout_query.invoice_payload
+    order = _payment_orders().get(payload)
+
+    if not order:
+        logger.warning("[STARS] unknown payload in pre_checkout: %s", payload)
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message="Счёт не найден. Пожалуйста, создайте новый счёт.",
+        )
+        return
+
+    expected_user = int(order.get("user_id", 0))
+    if (
+        expected_user != pre_checkout_query.from_user.id
+        or order.get("product") != "natal_full"
+        or order.get("currency") != "XTR"
+        or int(order.get("amount", 0)) != int(pre_checkout_query.total_amount)
+    ):
+        logger.warning(
+            "[STARS] pre_checkout rejected payload=%s user=%s amount=%s",
+            payload, pre_checkout_query.from_user.id, pre_checkout_query.total_amount
+        )
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message="Параметры счёта не совпадают. Создайте новый счёт.",
+        )
+        return
+
+    if order.get("status") != "pending":
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message="Этот счёт уже обработан. Создайте новый счёт.",
+        )
+        return
+
+    await pre_checkout_query.answer(ok=True)
+    logger.info(
+        "[STARS] pre_checkout approved payload=%s user=%s amount=%s XTR",
+        payload, expected_user, pre_checkout_query.total_amount
+    )
+
+
+@router.message(lambda m: m.successful_payment is not None)
+async def stars_successful_payment(message: Message):
+    payment = message.successful_payment
+    payload = payment.invoice_payload
+    order = _payment_orders().get(payload)
+
+    if not order:
+        logger.error("[STARS] successful payment for unknown payload=%s", payload)
+        await message.answer(
+            "Оплата получена, но счёт не найден в системе. Обратитесь в поддержку.",
+            reply_markup=main_menu(message.from_user.id),
+        )
+        return
+
+    user_id = message.from_user.id
+    expected_amount = int(order.get("amount", 0))
+    if (
+        int(order.get("user_id", 0)) != user_id
+        or payment.currency != "XTR"
+        or int(payment.total_amount) != expected_amount
+    ):
+        logger.error(
+            "[STARS] payment validation failed payload=%s user=%s currency=%s amount=%s",
+            payload, user_id, payment.currency, payment.total_amount
+        )
+        await message.answer(
+            "Оплата получена, но параметры платежа не прошли проверку. Обратитесь в поддержку.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
+    if order.get("status") == "paid":
+        logger.warning("[STARS] duplicate successful_payment payload=%s", payload)
+        await message.answer(
+            "✅ Этот платёж уже был обработан.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
+    order["status"] = "paid"
+    order["paid_at"] = datetime.now().isoformat()
+    order["telegram_payment_charge_id"] = payment.telegram_payment_charge_id
+    await _save_payment_order(payload, order)
+
     await PersonalizationEngine.update_user_profile(
         user_id,
-        "natal_full_payment_requested",
-        {"price_rub": 499}
+        "natal_full_payment_confirmed",
+        {
+            "stars": payment.total_amount,
+            "payload": payload,
+            "telegram_payment_charge_id": payment.telegram_payment_charge_id,
+        }
     )
-    await callback.message.answer(
-        "💎 *Полная натальная карта — 499 ₽*\n\n"
-        "Расчёт готов к запуску. Сейчас в боте подключается платёжный модуль Telegram Stars.\n\n"
-        "После оплаты автоматически запустится расчёт и вы получите полный разбор.",
+
+    logger.info(
+        "[STARS] payment confirmed user=%s payload=%s charge_id=%s",
+        user_id, payload, payment.telegram_payment_charge_id
+    )
+
+    await message.answer(
+        "✅ *Оплата получена!*
+
+"
+        "Начинаю расчёт полной натальной карты. Это может занять несколько минут.",
         parse_mode="Markdown",
-        reply_markup=main_menu(user_id)
+    )
+    await generate_full_natal_chart(
+        message,
+        user_id,
+        paid=True,
+        data_override=order.get("data"),
+    )
+
+
+@router.message(Command("paysupport"))
+async def payment_support_handler(message: Message):
+    await message.answer(
+        "По вопросам оплаты полной натальной карты напишите администратору бота.",
+        reply_markup=main_menu(message.from_user.id),
+    )
+
+
+@router.message(Command("terms"))
+async def terms_handler(message: Message):
+    await message.answer(
+        "Условия покупки полной натальной карты:\n\n"
+        "Оплата производится в Telegram Stars (XTR). "
+        "После подтверждения платежа бот запускает расчёт и формирование персонального отчёта.\n\n"
+        "По вопросам оплаты, возврата или проблем с получением отчёта используйте /paysupport.",
+        reply_markup=main_menu(message.from_user.id),
     )
 
 
@@ -2254,17 +2448,19 @@ async def natal_chart_handler(m: Message, date_str: str, birth_time: str = None)
         birth_date=date_str
     )
 
-async def generate_full_natal_chart(message: Message, user_id: int, paid: bool = False, test_mode: bool = False):
+async def generate_full_natal_chart(message: Message, user_id: int, paid: bool = False, test_mode: bool = False, data_override: Optional[dict] = None):
     """Формирует платный полный натальный отчёт только после успешной оплаты."""
     if not paid and not test_mode:
         await message.answer("Для доступа к полной карте сначала требуется оплата.", reply_markup=main_menu(user_id))
         return
 
     history = storage.personalization["user_history"].get(str(user_id), {})
-    data = next(
-        (a.get("data", {}) for a in reversed(history.get("actions", [])) if a.get("action") == "natal_full_data_collected"),
-        None
-    )
+    data = data_override
+    if data is None:
+        data = next(
+            (a.get("data", {}) for a in reversed(history.get("actions", [])) if a.get("action") == "natal_full_data_collected"),
+            None
+        )
     if not data:
         await message.answer("Не хватает данных рождения. Запустите оформление полной карты ещё раз.", reply_markup=main_menu(user_id))
         return
