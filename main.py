@@ -1138,7 +1138,7 @@ async def natal_full_payment(callback: types.CallbackQuery):
     ])
     await bot.send_message(
         user_id,
-        f"💡 Для оплаты нужно {NATAL_FULL_STARS} Stars.\\n"
+        f"💡 Для оплаты нужно {NATAL_FULL_STARS} Stars.\n"
         "Если Telegram Desktop не открывает оплату при нулевом балансе, "
         "сначала пополните Stars кнопкой ниже, затем вернитесь к счёту и нажмите «Оплатить».",
         reply_markup=topup_keyboard,
