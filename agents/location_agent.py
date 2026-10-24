@@ -294,7 +294,9 @@ async def resolve_location(place: str) -> dict[str, Any]:
 
     query_tokens = _tokens(place)
     strong = [c for c in ranked if c.score >= max(0.58, best.score - 0.12)]
-    if len(query_tokens) <= 2 and len(strong) >= 2:
+    # A city + country (e.g. «Москва, Россия») is specific enough; multiple
+    # geocoder records may be duplicate/admin objects rather than distinct towns.
+    if len(query_tokens) <= 1 and len(strong) >= 2:
         rows = [{"display_name": c.display_name, "latitude": c.latitude,
                  "longitude": c.longitude, "timezone": c.timezone,
                  "confidence": round(c.score, 3)} for c in strong[:5]]
