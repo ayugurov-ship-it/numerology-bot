@@ -1265,9 +1265,7 @@ async def stars_successful_payment(message: Message):
     )
 
     await message.answer(
-        "✅ *Оплата получена!*
-
-"
+        "✅ *Оплата получена!*\n\n"
         "Начинаю расчёт полной натальной карты. Это может занять несколько минут.",
         parse_mode="Markdown",
     )
