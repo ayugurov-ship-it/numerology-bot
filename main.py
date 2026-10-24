@@ -839,7 +839,7 @@ async def natal_full_buy(callback: types.CallbackQuery):
 
     if not stored_date:
         await callback.message.answer(
-            "💎 *Полная натальная карта — {NATAL_FULL_STARS} Stars*\n\n"
+            "💎 *Полная натальная карта — " + str(NATAL_FULL_STARS) + " Stars*\n\n"
             "Сначала укажите дату рождения через раздел «🌌 Натальный портрет»",
             parse_mode="Markdown",
             reply_markup=main_menu(user_id)
@@ -1133,6 +1133,7 @@ async def natal_full_payment(callback: types.CallbackQuery):
             title="Полная натальная карта",
             description="Персональный натальный отчёт с расчётом планет, аспектов и домов.",
             payload=payload,
+            provider_token="",
             currency="XTR",
             prices=[
                 types.LabeledPrice(
