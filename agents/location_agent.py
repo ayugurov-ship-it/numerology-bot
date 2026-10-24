@@ -294,9 +294,21 @@ async def resolve_location(place: str) -> dict[str, Any]:
 
     query_tokens = _tokens(place)
     strong = [c for c in ranked if c.score >= max(0.58, best.score - 0.12)]
-    # A city + country (e.g. «Москва, Россия») is specific enough; multiple
-    # geocoder records may be duplicate/admin objects rather than distinct towns.
-    if len(query_tokens) <= 1 and len(strong) >= 2:
+    # Explicit country/administrative qualifiers make a short city query specific.
+    # Without this check, «Москва, Россия» can be rejected because geocoders return
+    # duplicate city/admin records. Keep single-name queries conservative.
+    qualifier_tokens = {
+        "россия", "рф", "казахстан", "беларусь", "украина", "финляндия",
+        "сша", "америка", "германия", "франция", "италия", "испания",
+        "польша", "латвия", "литва", "эстония", "грузия", "армения",
+        "азербайджан", "узбекистан", "кыргызстан", "киргизия", "таджикистан",
+        "туркменистан", "молдова", "чехия", "словакия", "австрия", "швейцария",
+        "сербия", "турция", "израиль", "китай", "индия", "япония", "канада",
+        "область", "обл", "край", "район", "р-н", "регион", "округ", "штат",
+        "провинция", "республика",
+    }
+    has_qualifier = bool(query_tokens & qualifier_tokens) or "," in place
+    if len(query_tokens) <= 2 and not has_qualifier and len(strong) >= 2:
         rows = [{"display_name": c.display_name, "latitude": c.latitude,
                  "longitude": c.longitude, "timezone": c.timezone,
                  "confidence": round(c.score, 3)} for c in strong[:5]]
@@ -304,7 +316,8 @@ async def resolve_location(place: str) -> dict[str, Any]:
             "Найдено несколько населённых пунктов с таким названием.", rows
         )
 
-    if second and best.score < 0.72 and best.score - second.score < 0.07:
+    if (second and not has_qualifier and len(query_tokens) <= 2
+            and best.score < 0.72 and best.score - second.score < 0.07):
         rows = [{"display_name": c.display_name, "latitude": c.latitude,
                  "longitude": c.longitude, "timezone": c.timezone,
                  "confidence": round(c.score, 3)} for c in ranked[:5]]
