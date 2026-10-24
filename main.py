@@ -77,7 +77,7 @@ ADMIN_PATH = "/admin"
 PORT = int(os.getenv("PORT", 8000))
 USE_POLLING = os.getenv("USE_POLLING", "false").lower() == "true"
 # Telegram Stars price for the full natal chart. XTR = Telegram Stars.
-NATAL_FULL_STARS = int(os.getenv("NATAL_FULL_STARS", "499"))
+NATAL_FULL_STARS = int(os.getenv("NATAL_FULL_STARS", "250"))
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
