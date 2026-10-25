@@ -1127,20 +1127,21 @@ async def natal_full_payment(callback: types.CallbackQuery):
     }
     await _save_payment_order(payload, order)
 
-    # Telegram Desktop can fail to top up Stars from a third-party bot invoice
-    # when the user's Stars balance is insufficient. Offer the official Stars
-    # top-up deep link before showing the invoice.
+    # Telegram Desktop currently has a known bug when it tries to top up Stars
+    # directly from a third-party bot invoice with insufficient balance.
+    # Direct users to Telegram's official Premium Bot to buy Stars separately.
     topup_keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(
-            text=f"⭐ Пополнить баланс до {NATAL_FULL_STARS} Stars",
-            url=f"tg://stars_topup?balance={NATAL_FULL_STARS}",
+            text="⭐ Купить Stars через @PremiumBot",
+            url="https://t.me/PremiumBot",
         )]
     ])
     await bot.send_message(
         user_id,
-        f"💡 Для оплаты нужно {NATAL_FULL_STARS} Stars.\n"
-        "Если Telegram Desktop не открывает оплату при нулевом балансе, "
-        "сначала пополните Stars кнопкой ниже, затем вернитесь к счёту и нажмите «Оплатить».",
+        f"💡 Для оплаты нужно {NATAL_FULL_STARS} Stars.\\n"
+        "В Telegram Desktop при нулевом балансе может возникать ошибка оплаты. "
+        "Сначала купите Stars через официальный @PremiumBot, затем вернитесь сюда "
+        "и нажмите «Оплатить» под счётом натальной карты.",
         reply_markup=topup_keyboard,
     )
 
