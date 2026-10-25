@@ -1173,7 +1173,6 @@ async def natal_full_invoice(callback: types.CallbackQuery):
             title="Полная натальная карта",
             description="Персональный натальный отчёт с расчётом планет, аспектов и домов.",
             payload=payload,
-            provider_token="",
             currency="XTR",
             prices=[
                 types.LabeledPrice(
