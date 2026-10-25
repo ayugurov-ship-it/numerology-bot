@@ -1128,7 +1128,7 @@ async def natal_full_payment(callback: types.CallbackQuery):
     ])
     await bot.send_message(
         user_id,
-        f"💎 Полная натальная карта стоит {NATAL_FULL_STARS} Stars.\\n\\n"
+        f"💎 Полная натальная карта стоит {NATAL_FULL_STARS} Stars.\n\n"
         "Чтобы избежать ошибки Telegram Desktop, сначала отдельно купите Stars "
         "через официальный @PremiumBot. После пополнения вернитесь сюда и нажмите "
         "«Я пополнил баланс — выставить счёт».",
