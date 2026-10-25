@@ -1114,6 +1114,46 @@ async def natal_full_payment(callback: types.CallbackQuery):
         )
         return
 
+    # Ask the user to purchase Stars separately first. Telegram Desktop has a
+    # known bug when it attempts a top-up directly from a third-party invoice.
+    topup_keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(
+            text="⭐ Купить Stars через @PremiumBot",
+            url="https://t.me/PremiumBot",
+        )],
+        [types.InlineKeyboardButton(
+            text="✅ Я пополнил баланс — выставить счёт",
+            callback_data="natal_full_invoice",
+        )],
+    ])
+    await bot.send_message(
+        user_id,
+        f"💎 Полная натальная карта стоит {NATAL_FULL_STARS} Stars.\\n\\n"
+        "Чтобы избежать ошибки Telegram Desktop, сначала отдельно купите Stars "
+        "через официальный @PremiumBot. После пополнения вернитесь сюда и нажмите "
+        "«Я пополнил баланс — выставить счёт».",
+        reply_markup=topup_keyboard,
+    )
+
+
+@router.callback_query(lambda c: c.data == "natal_full_invoice")
+async def natal_full_invoice(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+
+    history = storage.personalization["user_history"].get(str(user_id), {})
+    data = next(
+        (a.get("data", {}) for a in reversed(history.get("actions", []))
+         if a.get("action") == "natal_full_data_collected"),
+        None
+    )
+    if not data:
+        await callback.message.answer(
+            "Не хватает данных для оплаты. Пожалуйста, заново оформите полную натальную карту.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
     payload = f"natal_full:{user_id}:{uuid4().hex}"
     order = {
         "user_id": user_id,
@@ -1126,24 +1166,6 @@ async def natal_full_payment(callback: types.CallbackQuery):
         "data": data,
     }
     await _save_payment_order(payload, order)
-
-    # Telegram Desktop currently has a known bug when it tries to top up Stars
-    # directly from a third-party bot invoice with insufficient balance.
-    # Direct users to Telegram's official Premium Bot to buy Stars separately.
-    topup_keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(
-            text="⭐ Купить Stars через @PremiumBot",
-            url="https://t.me/PremiumBot",
-        )]
-    ])
-    await bot.send_message(
-        user_id,
-        f"💡 Для оплаты нужно {NATAL_FULL_STARS} Stars.\\n"
-        "В Telegram Desktop при нулевом балансе может возникать ошибка оплаты. "
-        "Сначала купите Stars через официальный @PremiumBot, затем вернитесь сюда "
-        "и нажмите «Оплатить» под счётом натальной карты.",
-        reply_markup=topup_keyboard,
-    )
 
     try:
         await bot.send_invoice(
