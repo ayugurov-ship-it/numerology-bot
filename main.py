@@ -1825,20 +1825,132 @@ async def admin_users(m: Message):
             reply_markup=admin_menu()
         )
 
+# Temporary draft text for each administrator composing a broadcast.
+_broadcast_drafts: Dict[int, str] = {}
+
+
 @router.message(lambda m: m.text == "📢 Рассылка")
 async def admin_broadcast(m: Message):
     user_id = m.from_user.id
 
     if user_id not in ADMIN_IDS:
-        await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
+        await m.answer("Доступ запрещён", reply_markup=main_menu(user_id))
+        return
+
+    recipient_count = len(storage.users)
+    _broadcast_drafts.pop(user_id, None)
+    await m.answer(
+        "📢 <b>Рассылка пользователям</b>\n\n"
+        f"Получателей в базе: <b>{recipient_count}</b>.\n\n"
+        "Отправьте следующим сообщением текст рассылки. "
+        "Я покажу предварительный просмотр и попрошу подтверждение перед отправкой.\n\n"
+        "Для отмены нажмите «Отмена» или отправьте /cancel.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Отмена", callback_data="broadcast:cancel")
+        ]])
+    )
+    _broadcast_drafts[user_id] = ""
+
+
+@router.callback_query(lambda c: c.data in {"broadcast:confirm", "broadcast:cancel"})
+async def handle_broadcast_action(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ADMIN_IDS:
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
+    if callback.data == "broadcast:cancel":
+        _broadcast_drafts.pop(user_id, None)
+        await callback.answer("Рассылка отменена")
+        if callback.message:
+            await callback.message.edit_text("Рассылка отменена.")
+        return
+
+    message_text = _broadcast_drafts.get(user_id)
+    if not message_text:
+        await callback.answer("Сначала подготовьте текст рассылки.", show_alert=True)
+        return
+
+    # Freeze this draft before sending to prevent duplicate confirmation clicks.
+    _broadcast_drafts.pop(user_id, None)
+    recipient_ids = []
+    for raw_id in storage.users.keys():
+        try:
+            recipient_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            logger.warning("Skipping invalid Telegram user ID in users.json: %r", raw_id)
+
+    await callback.answer("Рассылка запущена")
+    status_message = None
+    if callback.message:
+        status_message = await callback.message.edit_text(
+            f"📤 Рассылка началась. Получателей: {len(recipient_ids)}.\n"
+            "Пожалуйста, дождитесь итогового отчёта."
+        )
+
+    sent = 0
+    failed = 0
+    blocked_or_unavailable = 0
+
+    for recipient_id in recipient_ids:
+        try:
+            await bot.send_message(recipient_id, message_text)
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            # Telegram commonly returns 403 when a user blocked the bot.
+            if getattr(exc, "status_code", None) == 403 or "TelegramForbiddenError" in type(exc).__name__:
+                blocked_or_unavailable += 1
+            logger.warning("Broadcast failed for user %s: %s", recipient_id, exc)
+        await asyncio.sleep(0.05)
+
+    report = (
+        "✅ <b>Рассылка завершена</b>\n\n"
+        f"👥 Получателей: {len(recipient_ids)}\n"
+        f"✅ Успешно отправлено: {sent}\n"
+        f"⚠️ Ошибок отправки: {failed}\n"
+        f"🚫 Заблокировали бота или недоступны: {blocked_or_unavailable}"
+    )
+    if status_message:
+        await status_message.edit_text(report, parse_mode="HTML")
+    else:
+        await bot.send_message(user_id, report, parse_mode="HTML")
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in _broadcast_drafts)
+async def receive_broadcast_text(m: Message):
+    user_id = m.from_user.id
+    if user_id not in ADMIN_IDS:
+        _broadcast_drafts.pop(user_id, None)
+        return
+
+    if m.text == "/cancel" or m.text == "🔙 В главное меню":
+        _broadcast_drafts.pop(user_id, None)
+        await m.answer("Рассылка отменена.", reply_markup=admin_menu())
+        return
+
+    if not m.text or not m.text.strip():
+        await m.answer("Пожалуйста, отправьте текстовое сообщение для рассылки.")
+        return
+
+    _broadcast_drafts[user_id] = m.text.strip()
+    preview = m.text.strip()
+    if len(preview) > 3500:
+        await m.answer("Сообщение слишком длинное для безопасного предпросмотра. Отправьте текст короче 3500 символов.")
+        _broadcast_drafts[user_id] = ""
         return
 
     await m.answer(
-        "📢 *Функция рассылки*\n\n"
-        "Эта функция находится в разработке.\n\n"
-        "Скоро вы сможете отправлять сообщения всем пользователям бота.",
-        parse_mode="Markdown",
-        reply_markup=admin_menu()
+        "🔎 <b>Предпросмотр рассылки</b>\n\n"
+        f"{__import__('html').escape(preview)}\n\n"
+        f"Получателей в базе: <b>{len(storage.users)}</b>\n\n"
+        "Отправить это сообщение всем пользователям?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Отправить всем", callback_data="broadcast:confirm"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")
+        ]])
     )
 
 @router.message(lambda m: m.text == "🔙 В главное меню")
