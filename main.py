@@ -319,6 +319,43 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+# Register users on any incoming private message, not only /start.
+# This also captures people who open an existing bot chat and use its menu directly.
+@router.message.outer_middleware()
+async def track_user_activity(handler, event: Message, data: dict):
+    user = getattr(event, "from_user", None)
+    if user is not None and getattr(event.chat, "type", None) == "private":
+        user_id = str(user.id)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        is_start_command = (event.text or "").split(maxsplit=1)[0] == "/start" if event.text else False
+
+        if not is_start_command:
+            is_new_user = user_id not in storage.users
+            if is_new_user:
+                storage.users[user_id] = {
+                    "username": user.username or "",
+                    "first_name": user.first_name or "",
+                    "last_name": user.last_name or "",
+                    "joined": now_str,
+                    "last_active": now_str,
+                    "total_requests": 0,
+                }
+                storage.stats["total_users"] = len(storage.users)
+                storage.stats.setdefault("daily_stats", {})
+                storage.stats["daily_stats"]["new_users"] = storage.stats["daily_stats"].get("new_users", 0) + 1
+                storage.stats.setdefault("user_registration_dates", {})[user_id] = now_str
+            else:
+                profile = storage.users[user_id]
+                profile["username"] = user.username or profile.get("username", "")
+                profile["first_name"] = user.first_name or profile.get("first_name", "")
+                profile["last_name"] = user.last_name or profile.get("last_name", "")
+                profile["last_active"] = now_str
+
+            storage.stats.setdefault("user_last_activity", {})[user_id] = now_str
+            await storage.save_all(force=is_new_user)
+
+    return await handler(event, data)
+
 # =====================
 # CONSTANTS
 # =====================
