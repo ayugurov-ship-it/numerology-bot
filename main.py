@@ -1727,61 +1727,66 @@ async def admin_users(m: Message):
         await m.answer("Доступ запрещен", reply_markup=main_menu(user_id))
         return
 
-    total_users = len(storage.users)
-    recent_users = []
-    inactive_users_list = []
+    try:
+        from html import escape
 
-    now = datetime.now()
+        total_users = len(storage.users)
+        recent_users = []
+        inactive_users_list = []
+        now = datetime.now()
 
-    for uid, user_data in list(storage.users.items())[-10:]:
-        username = user_data.get("username", "без username")
-        first_name = user_data.get("first_name", "")
-        last_name = user_data.get("last_name", "")
-        name = f"{first_name} {last_name}".strip() or f"Пользователь {uid[-4:]}"
-        joined = user_data.get("joined", "неизвестно")
-        last_active = user_data.get("last_active", "никогда")
+        for uid, user_data in list(storage.users.items())[-10:]:
+            username = str(user_data.get("username") or "без username").lstrip("@")
+            first_name = str(user_data.get("first_name") or "")
+            last_name = str(user_data.get("last_name") or "")
+            name = f"{first_name} {last_name}".strip() or f"Пользователь {str(uid)[-4:]}"
+            joined = str(user_data.get("joined") or "неизвестно")
+            last_active = str(user_data.get("last_active") or "никогда")
 
-        try:
-            if last_active != "никогда":
-                last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
-                days_inactive = (now - last_active_dt).days
-                status = "🟢" if days_inactive <= 7 else "🟡" if days_inactive <= 30 else "🔴"
-            else:
+            try:
+                if last_active != "никогда":
+                    last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
+                    days_inactive = max(0, (now - last_active_dt).days)
+                    status = "🟢" if days_inactive <= 7 else "🟡" if days_inactive <= 30 else "🔴"
+                    if days_inactive > 30:
+                        inactive_users_list.append(
+                            f"• {escape(name)} — неактивен {days_inactive} дн."
+                        )
+                else:
+                    status = "⚪"
+            except (ValueError, TypeError):
                 status = "⚪"
-        except:
-            status = "⚪"
 
-        user_info = f"{status} {name} (@{username})"
-        user_info += f"\n   📅 Регистрация: {joined}"
-        user_info += f"\n   ⏱️ Последняя активность: {last_active}"
+            safe_name = escape(name)
+            safe_username = escape(username)
+            user_info = f"{status} <b>{safe_name}</b> (@{safe_username})"
+            user_info += f"\n   📅 Регистрация: {escape(joined)}"
+            user_info += f"\n   ⏱️ Последняя активность: {escape(last_active)}"
+            recent_users.append(user_info)
 
         try:
-            if last_active != "никогда":
-                last_active_dt = datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S")
-                days_inactive = (now - last_active_dt).days
-                if days_inactive > 30:
-                    inactive_users_list.append(f"{name} - неактивен {days_inactive} дней")
-        except:
-            pass
+            users_file_size = Path("users.json").stat().st_size if Path("users.json").exists() else 0
+        except OSError:
+            users_file_size = 0
 
-        recent_users.append(user_info)
+        users_text = (
+            "👥 <b>Информация о пользователях</b>\n\n"
+            f"📊 Всего пользователей: <b>{total_users}</b>\n\n"
+            "📈 <b>Последние 10 пользователей</b> "
+            "(⚪ — нет данных, 🟢 — активен, 🟡 — давно, 🔴 — неактивен):\n"
+            + ("\n\n".join(recent_users) if recent_users else "• Нет данных")
+            + "\n\n📉 <b>Неактивные пользователи (более 30 дней):</b>\n"
+            + ("\n".join(inactive_users_list[:5]) if inactive_users_list else "• Нет неактивных пользователей")
+            + f"\n\n📁 Файл: <code>users.json</code>\n💾 Размер: {users_file_size} байт"
+        )
 
-    users_text = f"""
-👥 *Информация о пользователях*
-
-📊 Всего пользователей: {total_users}
-
-📈 *Последние 10 пользователей (⚪=нет данных, 🟢=активен, 🟡=давно, 🔴=неактивен):*
-{chr(10).join(recent_users) if recent_users else "• Нет данных"}
-
-📉 *Неактивные пользователи (более 30 дней):*
-{chr(10).join(inactive_users_list[:5]) if inactive_users_list else "• Нет неактивных пользователей"}
-
-📁 Файл с пользователями: `users.json`
-💾 Размер файла: {Path("users.json").stat().st_size if Path("users.json").exists() else 0} байт
-"""
-
-    await m.answer(users_text, parse_mode="Markdown", reply_markup=admin_menu())
+        await m.answer(users_text, parse_mode="HTML", reply_markup=admin_menu())
+    except Exception:
+        logger.exception("Failed to build admin users report")
+        await m.answer(
+            "Не удалось сформировать список пользователей. Ошибка записана в лог.",
+            reply_markup=admin_menu()
+        )
 
 @router.message(lambda m: m.text == "📢 Рассылка")
 async def admin_broadcast(m: Message):
