@@ -557,9 +557,14 @@ class NumerologyFeatures:
     @staticmethod
     def calculate_month_period_number(date_str: str) -> Optional[int]:
         try:
-            year, month, _ = date_str.split('.')
-            return NumerologyFeatures.reduce_number(sum(int(d) for d in year + month))
-        except Exception:
+            # Все даты здесь передаются в формате ДД.ММ.ГГГГ.
+            # Число месяца зависит от цифр календарного года и месяца.
+            parsed = datetime.strptime(date_str, "%d.%m.%Y")
+            year_month_digits = f"{parsed.year}{parsed.month:02d}"
+            return NumerologyFeatures.reduce_number(
+                sum(int(digit) for digit in year_month_digits)
+            )
+        except (TypeError, ValueError):
             return None
 
     @staticmethod
@@ -2600,10 +2605,14 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                     diagnostic_categories.append("нумерологические значения")
                 if not diagnostic_categories:
                     diagnostic_categories.append("логическая согласованность текста")
+                issue_details = "; ".join(
+                    str(issue)[:180] for issue in repaired_qa["issues"][:2]
+                )
                 response = (
                     "⚠️ Не удалось надёжно проверить этот прогноз, поэтому я не буду отправлять "
                     "непроверенный текст.\n"
-                    "Что не прошло проверку: " + ", ".join(diagnostic_categories) + ". "
+                    "Что не прошло проверку: " + ", ".join(diagnostic_categories) + ".\n"
+                    "Подробности: " + issue_details + ". "
                     "Попробуйте сформировать прогноз ещё раз позже."
                 )
         except Exception:
