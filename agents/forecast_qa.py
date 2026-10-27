@@ -506,17 +506,16 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
     if period_number is not None and label:
         # Не привязываемся к извлечению секции по эмодзи: Telegram/модель
         # могут добавлять вариационный селектор или Markdown вокруг заголовка.
-        # Проверяем именно названный показатель и его числовое значение.
-        normalized_text = text.replace("\\ufe0f", "").replace("\\u200b", "")
+        normalized_text = text.replace("\ufe0f", "").replace("\u200b", "")
         normalized_text = re.sub(r"[*_\x60~]", "", normalized_text)
         label_parts = [re.escape(part) for part in str(label).split()]
-        label_regex = r"\\s+".join(label_parts)
-        label_pattern = rf"\\b{label_regex}\\s*[:—–-]?\\s*(\\d{{1,2}})\\b"
+        label_regex = r"\s+".join(label_parts)
+        label_pattern = rf"\b{label_regex}\s*[:—–-]?\s*(\d{{1,2}})\b"
         number_match = re.search(label_pattern, normalized_text, flags=re.IGNORECASE)
         if not number_match:
-            # Fallback for output with an extra word such as "Число месяца — 3".
+            # Резервный вариант для формата «Число месяца — 3» или похожего.
             number_match = re.search(
-                rf"\\b{label_regex}\\b[^\\d]{{0,16}}(\\d{{1,2}})\\b",
+                rf"\b{label_regex}\b[^\d]{{0,16}}(\d{{1,2}})\b",
                 normalized_text,
                 flags=re.IGNORECASE,
             )
