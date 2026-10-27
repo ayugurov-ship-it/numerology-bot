@@ -245,11 +245,13 @@ def _transition_records(plan: dict[str, Any]) -> list[dict[str, Any]]:
         from_sign = _SIGN_TO_CANONICAL.get(match.group(1).lower())
         to_sign = _SIGN_TO_CANONICAL.get(match.group(2).lower())
         if from_sign and to_sign and planet.strip() in _PLANETS:
+            time_match = re.search(r"\bв\s+(\d{2}:\d{2})\b", rest)
             records.append({
                 "planet": planet.strip(),
                 "from_sign": from_sign,
                 "to_sign": to_sign,
                 "date": event.get("date"),
+                "time": time_match.group(1) if time_match else None,
             })
     return records
 
@@ -350,12 +352,13 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
                 claimed_signs.append(sign_name)
         for claimed in set(claimed_signs):
             allowed_dates = set()
+            late_transition_needs_time = False
             for day in constraint:
                 day_key = day.strftime("%d.%m.%Y")
-                if moon_positions.get(day_key) == claimed:
+                noon_sign = moon_positions.get(day_key)
+                if noon_sign == claimed:
                     allowed_dates.add(day)
-                # Если Луна пересекает границу знака в этот день,
-                # допустимы и знак до перехода, и знак после перехода.
+
                 for event in transition_records:
                     raw_date = event.get("date")
                     if event.get("planet") != "Луна" or not isinstance(raw_date, str):
@@ -366,12 +369,31 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
                     event_date = date(
                         int(date_match.group(3)), int(date_match.group(2)), int(date_match.group(1))
                     )
-                    if event_date == day and claimed in (event["from_sign"], event["to_sign"]):
+                    if event_date != day:
+                        continue
+                    if claimed in (event["from_sign"], event["to_sign"]):
                         allowed_dates.add(day)
+                    # Если на полдень Луна ещё в другом знаке, а в заявленный
+                    # знак входит позднее, укажи это как событие со временем.
+                    if noon_sign != claimed and event["to_sign"] == claimed and event.get("time"):
+                        hour, minute = map(int, event["time"].split(":"))
+                        if hour >= 12:
+                            late_transition_needs_time = True
+
             if not allowed_dates:
                 issues.append(
                     f"Знак Луны «{claimed}» не подтверждён для указанной даты/периода: {sentence[:160]}"
                 )
+            elif len(constraint) == 1 and late_transition_needs_time:
+                if not re.search(
+                    r"\b(?:к вечеру|вечером|поздно вечером|после полудня|после обеда|"
+                    r"в конце дня|к концу дня|в\s+\d{1,2}:\d{2})\b",
+                    sentence,
+                    flags=re.IGNORECASE,
+                ):
+                    issues.append(
+                        f"Луна входит в знак «{claimed}» только позже в этот день; укажи время перехода: {sentence[:160]}"
+                    )
 
     # 5. Не допускаем астрологический переход, записанный как пара знаков без названия планеты.
     sign_pair_pattern = rf"\b({_SIGN_FORM_PATTERN})\s+в\s+({_SIGN_FORM_PATTERN})\b"
