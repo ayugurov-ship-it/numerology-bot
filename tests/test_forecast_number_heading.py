@@ -37,6 +37,11 @@ class ForecastNumberHeadingTests(unittest.TestCase):
         self.assertFalse(result["pass"])
         self.assertTrue(any("Неверное число месяца" in issue for issue in result["issues"]))
 
+    def test_error_response_is_not_decorated_with_number_heading(self):
+        text = "🔮 Произошла ошибка при обработке запроса. Попробуйте позже."
+        normalized = ensure_period_number_heading(text, "число месяца", 3)
+        self.assertEqual(normalized, text)
+
 
 if __name__ == "__main__":
     unittest.main()
