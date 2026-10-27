@@ -539,28 +539,32 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
     period_number = plan.get("period_number")
     label = plan.get("period_number_label")
     if period_number is not None and label:
-        # Не привязываемся к извлечению секции по эмодзи: Telegram/модель
-        # могут добавлять вариационный селектор или Markdown вокруг заголовка.
         normalized_text = text.replace("\ufe0f", "").replace("\u200b", "")
-        normalized_text = re.sub(r"[*_\x60~]", "", normalized_text)
-        label_parts = [re.escape(part) for part in str(label).split()]
-        label_regex = r"\s+".join(label_parts)
-        label_pattern = rf"\b{label_regex}\s*[:—–-]?\s*(\d{{1,2}})\b"
-        number_match = re.search(label_pattern, normalized_text, flags=re.IGNORECASE)
-        if not number_match:
-            # Резервный вариант для формата «Число месяца — 3» или похожего.
-            number_match = re.search(
-                rf"\b{label_regex}\b[^\d]{{0,16}}(\d{{1,2}})\b",
-                normalized_text,
-                flags=re.IGNORECASE,
-            )
-        if not number_match:
+        normalized_text = re.sub(r"[*_~]", "", normalized_text)
+        label_regex = r"\s+".join(re.escape(part) for part in str(label).split())
+        label_matches = list(re.finditer(
+            rf"(?<!\w){label_regex}(?!\w)",
+            normalized_text,
+            flags=re.IGNORECASE,
+        ))
+        values = []
+        for label_match in label_matches:
+            tail = normalized_text[label_match.end():]
+            number_match = re.match(r"\s*[:—–-]?\s*(\d{1,2})\b", tail)
+            if not number_match:
+                number_match = re.match(r"[^\d]{0,16}(\d{1,2})\b", tail)
+            if number_match:
+                values.append(int(number_match.group(1)))
+
+        if not values:
             issues.append(
                 f"В нумерологическом разделе должно быть явно указано «{label} {period_number}»."
             )
-        elif int(number_match.group(1)) != int(period_number):
+        elif any(value != int(period_number) for value in values):
+            wrong_values = sorted(set(value for value in values if value != int(period_number)))
             issues.append(
-                f"Неверное {label}: заявлено {number_match.group(1)}, расчёт показывает {period_number}."
+                f"Неверное {label}: заявлено {', '.join(map(str, wrong_values))}, "
+                f"расчёт показывает {period_number}."
             )
 
     # 8. Запрещаем категорические обещания результата.
