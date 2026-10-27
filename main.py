@@ -2588,9 +2588,22 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                     "FORECAST QA FAIL after repair: period=%s issues=%s",
                     h_type, repaired_qa["issues"]
                 )
+                issue_text = " ".join(str(issue).lower() for issue in repaired_qa["issues"])
+                diagnostic_categories = []
+                if "дат" in issue_text or "период" in issue_text:
+                    diagnostic_categories.append("даты/границы периода")
+                if "аспект" in issue_text or "пара планет" in issue_text:
+                    diagnostic_categories.append("астрологические аспекты")
+                if "луны" in issue_text or "переход" in issue_text or "знак луны" in issue_text:
+                    diagnostic_categories.append("положение и переходы Луны")
+                if "число" in issue_text or "нумеролог" in issue_text:
+                    diagnostic_categories.append("нумерологические значения")
+                if not diagnostic_categories:
+                    diagnostic_categories.append("логическая согласованность текста")
                 response = (
-                    "⚠️ Не удалось надёжно проверить даты и астрологические события этого прогноза. "
-                    "Чтобы не вводить вас в заблуждение, я не буду отправлять непроверенный текст. "
+                    "⚠️ Не удалось надёжно проверить этот прогноз, поэтому я не буду отправлять "
+                    "непроверенный текст.\n"
+                    "Что не прошло проверку: " + ", ".join(diagnostic_categories) + ". "
                     "Попробуйте сформировать прогноз ещё раз позже."
                 )
         except Exception:
