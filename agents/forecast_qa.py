@@ -59,6 +59,41 @@ _MONTHS = {
 }
 
 
+def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
+    """Ensure a visible number label exists without overwriting an explicitly wrong value."""
+    if not label or value is None:
+        return text
+
+    normalized = text.replace("\ufe0f", "").replace("\u200b", "")
+    normalized = re.sub(r"[*_~]", "", normalized)
+    label_regex = r"\s+".join(re.escape(part) for part in str(label).split())
+    existing_value = re.search(
+        rf"\b{label_regex}\b[^\d]{0,16}(\d{{1,2}})\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    # Leave any explicit value untouched so validate_forecast can detect mismatches.
+    if existing_value:
+        return text
+
+    canonical = f"🎯 {str(label).capitalize()} {value}"
+    section_match = re.search(
+        r"(?m)^[ \t]*[🎯🔢]\ufe0f?[^\n]*(?:\n(?![ \t]*✨).*)*",
+        text,
+    )
+    if section_match:
+        lines = section_match.group(0).splitlines()
+        first_line = re.sub(r"^[ \t]*[🎯🔢]\ufe0f?\s*", "", lines[0]).strip()
+        remaining = lines[1:]
+        new_lines = [canonical, first_line, *remaining] if first_line else [canonical, *remaining]
+        fixed_block = "\n".join(new_lines)
+        return text[:section_match.start()] + fixed_block + text[section_match.end():]
+
+    if "✨" in text:
+        return text.replace("✨", canonical + "\n\n✨", 1)
+    return text.rstrip() + "\n\n" + canonical
+
+
 def _sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
 
