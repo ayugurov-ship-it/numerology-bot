@@ -2536,7 +2536,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     qa = validate_forecast(response, plan, h_type)
     if not qa["pass"]:
         logger.warning("FORECAST QA FAIL: period=%s issues=%s", h_type, qa["issues"])
-            repair_prompt = f"""
+        repair_prompt = f"""
 Исправьте следующий астрологический прогноз без переписывания с нуля.
 Уберите ТОЛЬКО фактические ошибки, перечисленные ниже.
 РАСЧЁТНЫЕ ДАННЫЕ:
@@ -2551,15 +2551,17 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 Верните только исправленный текст в том же формате эмодзи-разделителей.
 Не добавляйте новых астрологических фактов.
 """
-            try:
+        try:
             repaired = await ask_groq(repair_prompt, "horoscope")
             repaired_qa = validate_forecast(repaired, plan, h_type)
             if repaired_qa["pass"]:
                 response = repaired
                 logger.info("FORECAST QA PASS after repair: period=%s", h_type)
             else:
-                logger.error("FORECAST QA FAIL after repair: period=%s issues=%s", h_type, repaired_qa["issues"])
-                # Не отправляем заведомо непроверенный текст без предупреждения в логах.
+                logger.error(
+                    "FORECAST QA FAIL after repair: period=%s issues=%s",
+                    h_type, repaired_qa["issues"]
+                )
         except Exception:
             logger.exception("FORECAST repair failed; keeping first response")
     else:
