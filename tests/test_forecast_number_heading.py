@@ -44,8 +44,8 @@ class ForecastNumberHeadingTests(unittest.TestCase):
 
     def test_weird_model_explanation_is_replaced_with_clear_definition(self):
         text = (
-            "🌟 Прогноз на месяц.\\n"
-            "🎯 Число месяца 3 - что это вообще такое число месяца 3\\n"
+            "🌟 Прогноз на месяц.\n"
+            "🎯 Число месяца 3 - что это вообще такое число месяца 3\n"
             "✨ Итог: завершите важное дело."
         )
         normalized = ensure_period_number_heading(text, "число месяца", 3)
