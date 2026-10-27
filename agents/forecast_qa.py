@@ -41,7 +41,7 @@ def _known_aspects(plan: dict[str, Any]) -> set[tuple[str, str, str]]:
                     continue
                 for aspect in ("соединение", "секстиль", "квадрат", "тригон", "оппозиция"):
                     if re.search(
-                        rf"\\b{re.escape(first)}\\s+{aspect}\\s+{re.escape(second)}\\b",
+                        rf"\b{re.escape(first)}\s+{aspect}\s+{re.escape(second)}\b",
                         value,
                         flags=re.IGNORECASE,
                     ):
@@ -105,7 +105,7 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
             end_date = date(*map(int, reversed(parsed_range[-1])))
             for match in re.finditer(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b", text):
                 day, month = int(match.group(1)), int(match.group(2))
-                year = int(match.group(3)) if match.group(3) else start_date.year
+                year = int(match.group(3)) if match.group(3) else (end_date.year if month < start_date.month and end_date.year > start_date.year else start_date.year)
                 try:
                     mentioned_date = date(year, month, day)
                 except ValueError:
