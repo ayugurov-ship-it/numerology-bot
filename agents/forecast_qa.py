@@ -15,6 +15,20 @@ _SIGNS = (
     "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы",
 )
 _ASPECTS = ("соединени", "секстил", "квадрат", "тригон", "оппозиц")
+_SIGN_FORMS = {
+    "Овен": ("Овен", "Овне"),
+    "Телец": ("Телец", "Тельце"),
+    "Близнецы": ("Близнецы", "Близнецах"),
+    "Рак": ("Рак", "Раке"),
+    "Лев": ("Лев", "Льве"),
+    "Дева": ("Дева", "Деве"),
+    "Весы": ("Весы", "Весах"),
+    "Скорпион": ("Скорпион", "Скорпионе"),
+    "Стрелец": ("Стрелец", "Стрельце"),
+    "Козерог": ("Козерог", "Козероге"),
+    "Водолей": ("Водолей", "Водолее"),
+    "Рыбы": ("Рыбы", "Рыбах"),
+}
 
 
 def _sentences(text: str) -> list[str]:
@@ -83,15 +97,23 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
     positions = plan.get("positions", {})
     for sentence in _sentences(text):
         for planet in _PLANETS:
-            pattern = rf"{planet}[^.!?]{{0,45}}\bв\s+({'|'.join(_SIGNS)})\b"
+            form_to_sign = {
+                form.lower(): sign
+                for sign, forms in _SIGN_FORMS.items()
+                for form in forms
+            }
+            forms_pattern = "|".join(
+                re.escape(form) for forms in _SIGN_FORMS.values() for form in forms
+            )
+            pattern = rf"{planet}[^.!?]{{0,45}}\bв\s+({forms_pattern})\b"
             match = re.search(pattern, sentence, flags=re.IGNORECASE)
             if not match:
                 continue
-            claimed = match.group(1)
+            claimed = form_to_sign.get(match.group(1).lower(), match.group(1))
             actual = positions.get(planet, {}).get("sign")
             if actual and claimed.lower() != actual.lower():
                 issues.append(
-                    f"Неверное положение {planet}: заявлено {claimed}, "
+                    f"Неверное положение {planet}: заявлено {match.group(1)}, "
                     f"расчёт показывает {actual}."
                 )
 
