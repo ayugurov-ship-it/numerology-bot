@@ -260,4 +260,34 @@ def build_period_sky_summary(
                 })
         current += timedelta(days=1)
 
-    return events[:max_events]
+    # Не обрезаем список с начала периода: это приводило к тому, что
+    # месячный прогноз описывал события первых дней и игнорировал конец месяца.
+    if len(events) <= max_events:
+        return events
+
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        by_date.setdefault(event["date"], []).append(event)
+    dates = sorted(by_date)
+    if len(dates) >= max_events:
+        # Выбираем даты равномерно по всему периоду, включая его конец.
+        if max_events == 1:
+            selected_dates = [dates[-1]]
+        else:
+            indexes = [
+                round(i * (len(dates) - 1) / (max_events - 1))
+                for i in range(max_events)
+            ]
+            selected_dates = [dates[i] for i in indexes]
+        return [by_date[date][0] for date in selected_dates]
+
+    # Если уникальных дат меньше лимита, сначала берём по одному событию
+    # на каждую дату, затем заполняем остаток дополнительными событиями.
+    selected = [by_date[date][0] for date in dates]
+    for depth in range(1, max((len(items) for items in by_date.values()), default=1)):
+        for date in dates:
+            if depth < len(by_date[date]) and len(selected) < max_events:
+                selected.append(by_date[date][depth])
+        if len(selected) >= max_events:
+            break
+    return sorted(selected, key=lambda event: (event["date"], event["text"]))
