@@ -2326,13 +2326,13 @@ def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
     if not label or value is None:
         return text
 
-    normalized = text.replace("\\ufe0f", "").replace("\\u200b", "")
-    normalized = re.sub(r"[*_\\x60~]", "", normalized)
-    label_regex = r"\\s+".join(re.escape(part) for part in str(label).split())
+    normalized = text.replace("\ufe0f", "").replace("\u200b", "")
+    normalized = re.sub(r"[*_~]", "", normalized)
+    label_regex = r"\s+".join(re.escape(part) for part in str(label).split())
 
     # Если заголовок уже содержит число, не правим его: QA должна проверить значение.
     existing_value = re.search(
-        rf"\\b{label_regex}\\b[^\\d]{{0,16}}(\\d{{1,2}})\\b",
+        rf"\b{label_regex}\b[^\d]{0,16}(\d{{1,2}})\b",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -2341,26 +2341,27 @@ def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
 
     canonical = f"🎯 {str(label).capitalize()} {value}"
 
-    # Ищем блок нумерологии и заменяем его заголовок, сохраняя объяснение.
-    section_match = re.search(r"(?ms)^[ \\t]*[🎯🔢]\\ufe0f?[^\\n]*(?:\\n(?!(?:[ \\t]*✨)).*)*", text)
+    # Ищем нумерологический блок и заменяем его заголовок, сохраняя пояснение.
+    section_match = re.search(
+        r"(?m)^[ \t]*[🎯🔢]\ufe0f?[^\n]*(?:\n(?![ \t]*✨).*)*",
+        text,
+    )
     if section_match:
         block = section_match.group(0)
         lines = block.splitlines()
-        first_line = re.sub(r"^[ \\t]*[🎯🔢]\\ufe0f?\\s*", "", lines[0]).strip()
+        first_line = re.sub(r"^[ \t]*[🎯🔢]\ufe0f?\s*", "", lines[0]).strip()
         remaining = lines[1:]
         if first_line:
-            # Не теряем пояснение, которое модель поставила в той же строке с маркером.
             new_lines = [canonical, first_line, *remaining]
         else:
             new_lines = [canonical, *remaining]
-        fixed_block = "\\n".join(new_lines)
+        fixed_block = "\n".join(new_lines)
         return text[:section_match.start()] + fixed_block + text[section_match.end():]
 
-    # Если модели вообще не удалось создать раздел, вставляем проверяемый заголовок
-    # перед итогом; сама интерпретация не придумывается программой.
+    # Если раздел отсутствует, добавляем проверяемый заголовок перед итогом.
     if "✨" in text:
-        return text.replace("✨", canonical + "\\n\\n✨", 1)
-    return text.rstrip() + "\\n\\n" + canonical
+        return text.replace("✨", canonical + "\n\n✨", 1)
+    return text.rstrip() + "\n\n" + canonical
 
 
 # === FORECAST AGENT PIPELINE V1 ===
