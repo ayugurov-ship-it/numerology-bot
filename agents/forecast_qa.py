@@ -488,9 +488,11 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
     # 7. Не смешиваем число жизненного пути с числом недели/месяца/личного дня.
     life_number = plan.get("life_number")
     if life_number is not None:
+        # Проверяем только явные числовые утверждения. Не ловим обычные фразы
+        # о «жизненной дороге», если в том же предложении встречается другое число.
         life_patterns = (
-            r"(?:число\s+жизненного\s+пути|число\s+пути)\D{0,20}(\d{1,2})",
-            r"жизненная\s+дорога\D{0,30}(\d{1,2})",
+            r"(?:число\s+жизненного\s+пути|число\s+пути)\D{0,16}(\d{1,2})",
+            r"жизненная\s+дорога\s*[:—-]\s*(\d{1,2})",
         )
         for pattern in life_patterns:
             for match in re.finditer(pattern, text, flags=re.IGNORECASE):
@@ -503,7 +505,7 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
     label = plan.get("period_number_label")
     if period_number is not None and label:
         number_section = re.search(
-            r"(?:🎯|🔢)\s*(.*?)(?=\n\s*(?:✨|$)|$)", text, flags=re.DOTALL
+            r"(?:🎯|🔢)(.*?)(?=✨|\Z)", text, flags=re.DOTALL
         )
         section = number_section.group(1) if number_section else ""
         label_pattern = rf"{re.escape(str(label))}\s*[:—-]?\s*(\d+)"
