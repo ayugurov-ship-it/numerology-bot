@@ -64,6 +64,16 @@ def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
     if not label or value is None:
         return text
 
+    # Do not decorate service errors or QA diagnostics as if they were forecasts.
+    failure_markers = (
+        "произошла ошибка при обработке запроса",
+        "не удалось получить прогноз",
+        "не удалось надёжно проверить",
+        "не удалось проверить точность",
+    )
+    if any(marker in text.lower() for marker in failure_markers):
+        return text
+
     normalized = text.replace("\ufe0f", "").replace("\u200b", "")
     normalized = re.sub(r"[*_~]", "", normalized)
     label_regex = r"\s+".join(re.escape(part) for part in str(label).split())
