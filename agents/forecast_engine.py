@@ -245,7 +245,7 @@ def build_period_sky_summary(
     start_date: str,
     end_date: str,
     timezone_name: str = "Europe/Moscow",
-    max_events: int = 14,
+    max_events: int | None = 14,
 ) -> list[dict[str, Any]]:
     start = datetime.strptime(start_date, "%d.%m.%Y").date()
     end = datetime.strptime(end_date, "%d.%m.%Y").date()
@@ -272,9 +272,10 @@ def build_period_sky_summary(
                 })
         current += timedelta(days=1)
 
-    # Не обрезаем список с начала периода: это приводило к тому, что
-    # месячный прогноз описывал события первых дней и игнорировал конец месяца.
-    if len(events) <= max_events:
+    # Когда max_events=None, возвращаем полный набор фактов для проверки
+    # датированных аспектов и переходов. Для генерации месячного прогноза
+    # полный список ограничен разумным количеством реально рассчитанных событий.
+    if max_events is None or len(events) <= max_events:
         return events
 
     by_date: dict[str, list[dict[str, Any]]] = {}
@@ -303,3 +304,21 @@ def build_period_sky_summary(
         if len(selected) >= max_events:
             break
     return sorted(selected, key=lambda event: (event["date"], event["text"]))
+
+def build_period_moon_signs(
+    start_date: str,
+    end_date: str,
+    timezone_name: str = "Europe/Moscow",
+) -> dict[str, str]:
+    """Знак Луны на 12:00 местного времени для каждой даты в периоде."""
+    start = datetime.strptime(start_date, "%d.%m.%Y").date()
+    end = datetime.strptime(end_date, "%d.%m.%Y").date()
+    tz = ZoneInfo(timezone_name)
+    result: dict[str, str] = {}
+    current = start
+    while current <= end:
+        local_noon = datetime.combine(current, datetime.min.time(), tzinfo=tz) + timedelta(hours=12)
+        result[current.strftime("%d.%m.%Y")] = _positions(local_noon)["Луна"]["sign"]
+        current += timedelta(days=1)
+    return result
+
