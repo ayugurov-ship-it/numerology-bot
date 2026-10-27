@@ -42,6 +42,18 @@ class ForecastNumberHeadingTests(unittest.TestCase):
         normalized = ensure_period_number_heading(text, "число месяца", 3)
         self.assertEqual(normalized, text)
 
+    def test_weird_model_explanation_is_replaced_with_clear_definition(self):
+        text = (
+            "🌟 Прогноз на месяц.\\n"
+            "🎯 Число месяца 3 - что это вообще такое число месяца 3\\n"
+            "✨ Итог: завершите важное дело."
+        )
+        normalized = ensure_period_number_heading(text, "число месяца", 3)
+        self.assertNotIn("что это вообще такое", normalized)
+        self.assertIn("Это общий символический ориентир календарного месяца", normalized)
+        result = validate_forecast(normalized, self.plan, "month")
+        self.assertTrue(result["pass"], result["issues"])
+
 
 if __name__ == "__main__":
     unittest.main()
