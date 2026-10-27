@@ -331,7 +331,59 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
         for value in sorted(seen_outside):
             issues.append(f"Дата {value} находится вне прогнозируемого периода {plan.get('date')}.")
 
-    # 4. Проверяем переходы знаков Луны, названные как конкретные события.
+    # 4. Проверяем знак Луны на конкретную дату по полному дневному календарю.
+    moon_positions = plan.get("moon_positions", {})
+    for sentence in _sentences(text):
+        if not re.search(r"\bлун\w*\b", sentence, flags=re.IGNORECASE):
+            continue
+        constraint = _date_constraint(sentence, plan)
+        if not constraint:
+            continue
+        claimed_signs = []
+        for match in re.finditer(
+            rf"\bв\s+({_SIGN_FORM_PATTERN})\b",
+            sentence,
+            flags=re.IGNORECASE,
+        ):
+            sign_name = _SIGN_TO_CANONICAL.get(match.group(1).lower())
+            if sign_name:
+                claimed_signs.append(sign_name)
+        for claimed in set(claimed_signs):
+            allowed_dates = set()
+            for day in constraint:
+                day_key = day.strftime("%d.%m.%Y")
+                if moon_positions.get(day_key) == claimed:
+                    allowed_dates.add(day)
+                # Если Луна пересекает границу знака в этот день,
+                # допустимы и знак до перехода, и знак после перехода.
+                for event in transition_records:
+                    raw_date = event.get("date")
+                    if event.get("planet") != "Луна" or not isinstance(raw_date, str):
+                        continue
+                    date_match = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", raw_date)
+                    if not date_match:
+                        continue
+                    event_date = date(
+                        int(date_match.group(3)), int(date_match.group(2)), int(date_match.group(1))
+                    )
+                    if event_date == day and claimed in (event["from_sign"], event["to_sign"]):
+                        allowed_dates.add(day)
+            if not allowed_dates:
+                issues.append(
+                    f"Знак Луны «{claimed}» не подтверждён для указанной даты/периода: {sentence[:160]}"
+                )
+
+    # 5. Не допускаем астрологический переход, записанный как пара знаков без названия планеты.
+    sign_pair_pattern = rf"\b({_SIGN_FORM_PATTERN})\s+в\s+({_SIGN_FORM_PATTERN})\b"
+    for sentence in _sentences(text):
+        if re.search(sign_pair_pattern, sentence, flags=re.IGNORECASE):
+            if not re.search(r"\b(?:солнц|лун|меркур|венер|марс|юпитер|сатурн|уран|нептун|плутон)\w*\b", sentence, flags=re.IGNORECASE):
+                if _date_constraint(sentence, plan) is not None:
+                    issues.append(
+                        f"Неясное описание перехода знаков без названия планеты: {sentence[:160]}"
+                    )
+
+    # 6. Проверяем переходы знаков Луны, названные как конкретные события.
     for sentence in _sentences(text):
         lower = sentence.lower()
         if not re.search(r"\bлун\w*\b", lower):
