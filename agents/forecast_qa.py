@@ -279,14 +279,6 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
                 and record["first"] in planets
                 and record["second"] in planets
             ]
-            # Допускаем, что модель называет планеты в обратном порядке.
-            if not pair_records:
-                pair_records = [
-                    record for record in aspect_records
-                    if record["aspect"] == aspect
-                    and record["first"] in planets
-                    and record["second"] in planets
-                ]
             if not pair_records:
                 issues.append(
                     f"Неподтверждённый аспект/пара планет: {sentence[:180]}"
