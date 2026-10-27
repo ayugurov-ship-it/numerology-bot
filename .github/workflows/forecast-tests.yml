@@ -1,0 +1,33 @@
+name: Forecast QA tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "main.py"
+      - "agents/forecast_qa.py"
+      - "agents/forecast_engine.py"
+      - "tests/**"
+      - ".github/workflows/forecast-tests.yml"
+  pull_request:
+    paths:
+      - "main.py"
+      - "agents/forecast_qa.py"
+      - "agents/forecast_engine.py"
+      - "tests/**"
+      - ".github/workflows/forecast-tests.yml"
+
+jobs:
+  forecast-qa:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile forecast modules
+        run: python -m py_compile main.py agents/forecast_qa.py agents/forecast_engine.py
+      - name: Run forecast QA regression tests
+        run: python -m unittest discover -s tests -v
