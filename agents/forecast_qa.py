@@ -492,7 +492,7 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
         # о «жизненной дороге», если в том же предложении встречается другое число.
         life_patterns = (
             r"(?:число\s+жизненного\s+пути|число\s+пути)\D{0,16}(\d{1,2})",
-            r"жизненная\s+дорога\s*[:—-]\s*(\d{1,2})",
+            r"жизненная\s+дорога(?:\s+отмечена|\s+связана\s+с)?\s*(?:—|:)?\s*(?:числом\s*)?(\d{1,2})",
         )
         for pattern in life_patterns:
             for match in re.finditer(pattern, text, flags=re.IGNORECASE):
