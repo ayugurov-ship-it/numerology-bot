@@ -387,7 +387,7 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
             elif len(constraint) == 1 and late_transition_needs_time:
                 if not re.search(
                     r"\b(?:к вечеру|вечером|поздно вечером|после полудня|после обеда|"
-                    r"в конце дня|к концу дня|в\s+\d{1,2}:\d{2})\b",
+                    r"в конце дня|к концу дня|(?:в|после|около|с)\s+\d{1,2}:\d{2})\b",
                     sentence,
                     flags=re.IGNORECASE,
                 ):
