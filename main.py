@@ -2397,8 +2397,8 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         }
         context = (
             f"РАССЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА {date_description}. ИСПОЛЬЗУЙ ТОЛЬКО ИХ. "
-            "Даты в списке — даты событий; не переносить событие на другую дату.\\n"
-            + ("\\n".join(f"- {e['date']}: {e['text']}" for e in events)
+            "Даты в списке — даты событий; не переносить событие на другую дату.\n"
+            + ("\n".join(f"- {e['date']}: {e['text']}" for e in events)
                if events else "- В выбранном периоде нет событий, прошедших установленный порог отбора.")
         )
         if h_type == "week":
