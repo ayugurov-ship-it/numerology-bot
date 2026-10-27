@@ -250,7 +250,6 @@ def build_period_sky_summary(
     start = datetime.strptime(start_date, "%d.%m.%Y").date()
     end = datetime.strptime(end_date, "%d.%m.%Y").date()
     events = []
-    seen_aspects = set()
 
     current = start
     while current <= end:
@@ -262,9 +261,9 @@ def build_period_sky_summary(
                 "text": f'{ingress["planet"]}: {ingress["from_sign"]} → {ingress["to_sign"]} в {ingress["local_time"]}',
             })
         for aspect in day["aspects"]:
-            key = (aspect["first"], aspect["second"], aspect["aspect"])
-            if key not in seen_aspects and aspect["orb"] <= 1.5:
-                seen_aspects.add(key)
+            # Храним аспект отдельно для каждой даты: один и тот же аспект
+            # может оставаться в рабочем орбе несколько дней подряд.
+            if aspect["orb"] <= 3.0:
                 events.append({
                     "date": day["date"],
                     "type": "аспект",
