@@ -91,16 +91,19 @@ def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
 
     normalized = text.replace("\ufe0f", "").replace("\u200b", "")
     normalized = re.sub(r"[*_~]", "", normalized)
-    label_regex = r"\s+".join(re.escape(part) for part in str(label).split())
-    existing_value = re.search(
-        rf"\b{label_regex}\b[^\d]{0,16}(\d{{1,2}})\b",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    # An explicit but wrong number is not silently overwritten; QA must reject it.
-    if existing_value and int(existing_value.group(1)) != int(value):
-        return text
+    label_key = " ".join(str(label).lower().split())
 
+    # Inspect the label and number on the same line. Explicitly wrong values are
+    # left unchanged for validate_forecast to reject, never silently corrected.
+    for line in normalized.splitlines():
+        clean_line = " ".join(line.split()).lower()
+        position = clean_line.find(label_key)
+        if position < 0:
+            continue
+        tail = clean_line[position + len(label_key):]
+        found_value = re.search(r"[^\d]{0,16}(\d{1,2})\b", tail)
+        if found_value and int(found_value.group(1)) != int(value):
+            return text
     meaning = _NUMBER_MEANINGS.get(int(value), "Используйте это число как символический повод для размышления, а не как гарантированный прогноз.")
     if label.lower() == "число месяца":
         scope = "Это общий символический ориентир календарного месяца, а не ваше число жизненного пути."
