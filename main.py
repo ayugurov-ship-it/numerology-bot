@@ -2338,11 +2338,19 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         start = today
         end = today + timedelta(days=6)
     else:
-        start = today.replace(day=1)
-        if start.month == 12:
-            end = start.replace(year=start.year + 1, month=1, day=1) - timedelta(days=1)
+        # Если до конца месяца осталось не больше недели, прогнозируем следующий
+        # полный месяц: иначе пользователь получит почти целиком прошедший период.
+        current_month_end = today.replace(
+            day=calendar.monthrange(today.year, today.month)[1]
+        )
+        if (current_month_end - today).days <= 7:
+            if today.month == 12:
+                start = today.replace(year=today.year + 1, month=1, day=1)
+            else:
+                start = today.replace(month=today.month + 1, day=1)
         else:
-            end = start.replace(month=start.month + 1, day=1) - timedelta(days=1)
+            start = today
+        end = start.replace(day=calendar.monthrange(start.year, start.month)[1])
 
     date_description = (
         start.strftime("%d.%m.%Y")
@@ -2388,8 +2396,10 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
             "source": "Swiss Ephemeris / Moshier fallback",
         }
         context = (
-            "РАССЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА. ИСПОЛЬЗУЙ ТОЛЬКО ИХ.\n"
-            + "\n".join(f"- {e['date']}: {e['text']}" for e in events)
+            f"РАССЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА {date_description}. ИСПОЛЬЗУЙ ТОЛЬКО ИХ. "
+            "Даты в списке — даты событий; не переносить событие на другую дату.\\n"
+            + ("\\n".join(f"- {e['date']}: {e['text']}" for e in events)
+               if events else "- В выбранном периоде нет событий, прошедших установленный порог отбора.")
         )
         if h_type == "week":
             number_value = NumerologyFeatures.calculate_period_number(start_str, end_str)
@@ -2484,7 +2494,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 """
     else:
         prompt = f"""
-Ты — автор оригинального прогноза на месяц {date_description} с живой, образной подачей популярного астрологического видео-прогноза. Не имитируй конкретного автора и не копируй чужие формулировки.
+Ты — автор оригинального прогноза на период {date_description} с живой, образной подачей популярного астрологического видео-прогноза. Не имитируй конкретного автора и не копируй чужие формулировки.
 Дата рождения: {date_str}
 Знак: {zodiac_name} (стихия: {zodiac_element})
 Число жизненного пути: {life_number if life_number else "не определено"}
@@ -2522,10 +2532,10 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 
     response = await ask_groq(prompt, "horoscope")
 
-    if h_type in {"today", "tomorrow"}:
-        qa = validate_forecast(response, plan, h_type)
-        if not qa["pass"]:
-            logger.warning("FORECAST QA FAIL: period=%s issues=%s", h_type, qa["issues"])
+    # Контроль фактических утверждений запускается для всех периодов.
+    qa = validate_forecast(response, plan, h_type)
+    if not qa["pass"]:
+        logger.warning("FORECAST QA FAIL: period=%s issues=%s", h_type, qa["issues"])
             repair_prompt = f"""
 Исправьте следующий астрологический прогноз без переписывания с нуля.
 Уберите ТОЛЬКО фактические ошибки, перечисленные ниже.
@@ -2542,17 +2552,18 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 Не добавляйте новых астрологических фактов.
 """
             try:
-                repaired = await ask_groq(repair_prompt, "horoscope")
-                repaired_qa = validate_forecast(repaired, plan, h_type)
-                if repaired_qa["pass"]:
-                    response = repaired
-                    logger.info("FORECAST QA PASS after repair")
-                else:
-                    logger.error("FORECAST QA FAIL after repair: %s", repaired_qa["issues"])
-            except Exception:
-                logger.exception("FORECAST repair failed; keeping first response")
-        else:
-            logger.info("FORECAST QA PASS: period=%s", h_type)
+            repaired = await ask_groq(repair_prompt, "horoscope")
+            repaired_qa = validate_forecast(repaired, plan, h_type)
+            if repaired_qa["pass"]:
+                response = repaired
+                logger.info("FORECAST QA PASS after repair: period=%s", h_type)
+            else:
+                logger.error("FORECAST QA FAIL after repair: period=%s issues=%s", h_type, repaired_qa["issues"])
+                # Не отправляем заведомо непроверенный текст без предупреждения в логах.
+        except Exception:
+            logger.exception("FORECAST repair failed; keeping first response")
+    else:
+        logger.info("FORECAST QA PASS: period=%s", h_type)
 
     final_text = f"""
 🔮 *Ваш гороскоп* 🔮
