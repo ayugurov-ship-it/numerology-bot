@@ -2565,6 +2565,16 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 """
 
     response = await ask_groq(prompt, "horoscope")
+    if "произошла ошибка при обработке запроса" in response.lower():
+        logger.error("Forecast generation failed before QA: period=%s", h_type)
+        await safe_reply(
+            m,
+            "⚠️ Не удалось получить прогноз от сервиса генерации. "
+            "Проверьте состояние сервиса и попробуйте ещё раз позже.",
+            reply_markup=main_menu(user_id),
+        )
+        return
+
     response = ensure_period_number_heading(response, number_label, number_value)
 
     # Контроль фактических утверждений запускается для всех периодов.
@@ -2587,6 +2597,8 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
 """
         try:
             repaired = await ask_groq(repair_prompt, "horoscope")
+            if "произошла ошибка при обработке запроса" in repaired.lower():
+                raise RuntimeError("Forecast repair request failed at the generation service")
             repaired = ensure_period_number_heading(repaired, number_label, number_value)
             repaired_qa = validate_forecast(repaired, plan, h_type)
             if repaired_qa["pass"]:
