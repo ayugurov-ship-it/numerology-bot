@@ -134,29 +134,42 @@ def _phase(moon_lon: float, sun_lon: float, moon_speed: float, sun_speed: float)
     }
 
 
-def _find_ingress(start: datetime, planet: str, body: int, start_sign: str) -> dict[str, Any] | None:
-    # Ищем переход по часам и уточняем его бинарным поиском.
+def _find_ingress(start: datetime, planet: str, body: int) -> dict[str, Any] | None:
+    """Находит переход внутри календарных суток, сравнивая реальные знаки по часам."""
+    end = start + timedelta(days=1) - timedelta(seconds=1)
     previous = start
-    previous_lon = _positions(previous)[planet]["longitude"]
-    for h in range(1, 25):
-        current = start + timedelta(hours=h)
-        current_lon = _positions(current)[planet]["longitude"]
-        if _zodiac(current_lon)["sign"] != start_sign:
+    previous_sign = _positions(previous)[planet]["sign"]
+
+    # Включаем 23:59:59, но не полночь следующих суток.
+    samples = [start + timedelta(hours=h) for h in range(1, 24)]
+    samples.append(end)
+
+    for current in samples:
+        current_sign = _positions(current)[planet]["sign"]
+        if current_sign != previous_sign:
+            from_sign = previous_sign
+            to_sign = current_sign
             lo, hi = previous, current
-            for _ in range(12):
+
+            # Уточняем момент перехода бинарным поиском на границе знаков.
+            for _ in range(20):
                 mid = lo + (hi - lo) / 2
-                if _zodiac(_positions(mid)[planet]["longitude"])["sign"] == start_sign:
+                mid_sign = _positions(mid)[planet]["sign"]
+                if mid_sign == from_sign:
                     lo = mid
                 else:
                     hi = mid
+
             return {
                 "planet": planet,
-                "from_sign": start_sign,
-                "to_sign": _zodiac(_positions(hi)[planet]["longitude"])["sign"],
+                "from_sign": from_sign,
+                "to_sign": to_sign,
                 "local_time": hi.strftime("%H:%M"),
             }
+
         previous = current
-        previous_lon = current_lon
+        previous_sign = current_sign
+
     return None
 
 
@@ -193,8 +206,7 @@ def calculate_daily_sky(date_str: str, timezone_name: str = "Europe/Moscow") -> 
 
     ingresses = []
     for planet, body in PLANETS:
-        start_sign = positions[planet]["sign"]
-        ingress = _find_ingress(start, planet, body, start_sign)
+        ingress = _find_ingress(start, planet, body)
         if ingress:
             ingresses.append(ingress)
 
