@@ -28,7 +28,12 @@ from agents.location_agent import (
 from agents.natal_qa import validate_natal_chart
 from agents.orchestrator import calculate_verified_natal
 from agents.interpretation_agent import generate_verified_report
-from agents.forecast_engine import calculate_daily_sky, calculate_personal_day, build_period_sky_summary
+from agents.forecast_engine import (
+    calculate_daily_sky,
+    calculate_personal_day,
+    build_period_sky_summary,
+    build_period_moon_signs,
+)
 from agents.forecast_agent import build_forecast_plan, render_forecast_context
 from agents.forecast_qa import validate_forecast
 from payments.crypto_pay import create_test_invoice, get_invoice, get_me, CryptoPayError
@@ -2386,20 +2391,27 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         number_label = "личный день"
         number_value = personal_day["personal_day"]
     else:
-        events = build_period_sky_summary(start_str, end_str, tz_name, max_events=12)
+        # Полный список рассчитанных событий нужен и модели, и проверке QA:
+        # иначе проверка не сможет подтвердить аспект, который был отброшен лимитом.
+        events = build_period_sky_summary(start_str, end_str, tz_name, max_events=None)
+        moon_positions = build_period_moon_signs(start_str, end_str, tz_name)
         plan = {
             "period": h_type,
             "date": date_description,
             "zodiac": zodiac_name,
             "life_number": life_number,
             "events": events,
+            "moon_positions": moon_positions,
             "source": "Swiss Ephemeris / Moshier fallback",
         }
+        event_lines = "\n".join(f"- {e['date']}: {e['text']}" for e in events)
+        moon_lines = "\n".join(f"- {date}: Луна в {sign} в 12:00 по {tz_name}" for date, sign in moon_positions.items())
         context = (
-            f"РАССЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА {date_description}. ИСПОЛЬЗУЙ ТОЛЬКО ИХ. "
+            f"РАСЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА {date_description}. ИСПОЛЬЗУЙ ТОЛЬКО ИХ. "
             "Даты в списке — даты событий; не переносить событие на другую дату.\n"
-            + ("\n".join(f"- {e['date']}: {e['text']}" for e in events)
-               if events else "- В выбранном периоде нет событий, прошедших установленный порог отбора.")
+            + (event_lines if event_lines else "- В выбранном периоде нет событий, прошедших установленный порог отбора.")
+            + "\n\nРАСЧЁТНЫЙ ЗНАК ЛУНЫ НА 12:00 КАЖДОГО ДНЯ (это положение, не аспект):\n"
+            + moon_lines
         )
         if h_type == "week":
             number_value = NumerologyFeatures.calculate_period_number(start_str, end_str)
