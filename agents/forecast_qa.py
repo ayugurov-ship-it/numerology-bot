@@ -22,10 +22,30 @@ def _sentences(text: str) -> list[str]:
 
 
 def _known_aspects(plan: dict[str, Any]) -> set[tuple[str, str, str]]:
-    result = set()
-    for a in plan.get("aspects", []):
-        result.add((a["first"], a["second"], a["aspect"]))
-        result.add((a["second"], a["first"], a["aspect"]))
+    result: set[tuple[str, str, str]] = set()
+
+    def add(first: str, second: str, aspect: str) -> None:
+        result.add((first, second, aspect))
+        result.add((second, first, aspect))
+
+    for item in plan.get("aspects", []):
+        if all(key in item for key in ("first", "second", "aspect")):
+            add(item["first"], item["second"], item["aspect"])
+
+    # Для недельных/месячных планов аспекты хранятся в списке событий текстом.
+    for event in plan.get("events", []):
+        value = event.get("text", "")
+        for first in _PLANETS:
+            for second in _PLANETS:
+                if first == second:
+                    continue
+                for aspect in ("соединение", "секстиль", "квадрат", "тригон", "оппозиция"):
+                    if re.search(
+                        rf"\\b{re.escape(first)}\\s+{aspect}\\s+{re.escape(second)}\\b",
+                        value,
+                        flags=re.IGNORECASE,
+                    ):
+                        add(first, second, aspect)
     return result
 
 
@@ -75,11 +95,58 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
                     f"расчёт показывает {actual}."
                 )
 
-    # 3. Луна и дата: прогноз «завтра» не должен выдавать сегодня как основной день.
+    # 3. Проверяем даты, явно названные в тексте, на попадание в прогнозируемый период.
+    date_range = plan.get("date", "")
+    parsed_range = re.findall(r"(\d{2})\.(\d{2})\.(\d{4})", date_range)
+    if parsed_range:
+        from datetime import date
+        try:
+            start_date = date(*map(int, reversed(parsed_range[0])))
+            end_date = date(*map(int, reversed(parsed_range[-1])))
+            for match in re.finditer(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b", text):
+                day, month = int(match.group(1)), int(match.group(2))
+                year = int(match.group(3)) if match.group(3) else start_date.year
+                try:
+                    mentioned_date = date(year, month, day)
+                except ValueError:
+                    issues.append(f"Некорректная календарная дата: {match.group(0)}.")
+                    continue
+                if not (start_date <= mentioned_date <= end_date):
+                    issues.append(f"Дата {match.group(0)} находится вне прогнозируемого периода {date_range}.")
+        except (ValueError, TypeError):
+            pass
+
+    # 4. Прогноз «завтра» не должен выдавать сегодня как основной день.
     if period == "tomorrow" and re.search(r"\bсегодня\b", text.lower()):
         issues.append("В прогнозе на завтра обнаружено «сегодня».")
 
-    # 4. Запрещаем категорические обещания результата.
+    # 5. Для дневного прогноза проверяем названную фазу Луны.
+    moon_phase = plan.get("moon", {}).get("phase")
+    phase_aliases = {
+        "новолуние": ("новолуние",),
+        "растущий серп": ("растущий серп",),
+        "первая четверть": ("первая четверть",),
+        "растущая Луна": ("растущая луна",),
+        "полнолуние": ("полнолуние",),
+        "убывающая Луна": ("убывающая луна",),
+        "последняя четверть": ("последняя четверть",),
+        "убывающий серп": ("убывающий серп",),
+    }
+    mentioned_phases = [
+        alias
+        for aliases in phase_aliases.values()
+        for alias in aliases
+        if alias in text.lower()
+    ]
+    if moon_phase and mentioned_phases:
+        allowed = phase_aliases.get(moon_phase, (moon_phase.lower(),))
+        if not any(alias in allowed for alias in mentioned_phases):
+            issues.append(
+                f"Фаза Луны не совпадает с расчётом: заявлено {mentioned_phases[0]}, "
+                f"расчёт показывает {moon_phase}."
+            )
+
+    # 6. Запрещаем категорические обещания результата.
     if re.search(
         r"\b(точно произойд[её]т|неизбежно|гарантированно|гарантирует|"
         r"обязательно получите|обязательно произойд[её]т)\b",
