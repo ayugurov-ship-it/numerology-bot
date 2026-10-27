@@ -59,12 +59,27 @@ _MONTHS = {
 }
 
 
+_NUMBER_MEANINGS = {
+    1: "Единицу в символической нумерологии связывают с инициативой и началом. Выберите одну идею и сделайте первый небольшой шаг.",
+    2: "Двойку связывают с сотрудничеством и умением договариваться. Полезно искать решение, учитывающее не только вашу позицию, но и позицию другого человека.",
+    3: "Тройку связывают с общением, творчеством и обменом идеями. Выберите одну мысль, которой давно хотелось поделиться, и превратите её в конкретное действие.",
+    4: "Четвёрку связывают с порядком и устойчивой основой. Разбейте большую задачу на понятные шаги и закрепите один полезный результат.",
+    5: "Пятёрку связывают с переменами и гибкостью. Оставьте место для нового варианта, но прежде оцените его практические последствия.",
+    6: "Шестёрку связывают с заботой, ответственностью и близкими отношениями. Подумайте, где помощь действительно нужна, не забывая о собственных границах.",
+    7: "Семёрку связывают с анализом, обучением и переосмыслением. Выделите время, чтобы проверить факты и разобраться в одном важном для вас вопросе.",
+    8: "Восьмёрку связывают с управлением ресурсами и практическими целями. Сверьте приоритеты, время и расходы, прежде чем брать на себя новые обязательства.",
+    9: "Девятку связывают с завершением и подведением итогов. Закройте одно дело, которое больше не требует вашего внимания, и освободите место для следующего этапа.",
+    11: "Число 11 в символической нумерологии связывают с интуицией и вдохновением. Проверяйте впечатления фактами и записывайте идеи, которые стоит развить.",
+    22: "Число 22 связывают с воплощением замысла в конкретный план. Выберите достижимый результат и определите первый проверяемый шаг.",
+    33: "Число 33 связывают с поддержкой и ответственным отношением к людям. Помогайте там, где это уместно, и сохраняйте здоровые личные границы.",
+}
+
+
 def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
-    """Ensure a visible number label exists without overwriting an explicitly wrong value."""
+    """Normalizes a number section; leaves errors and explicitly wrong values untouched."""
     if not label or value is None:
         return text
 
-    # Do not decorate service errors or QA diagnostics as if they were forecasts.
     failure_markers = (
         "произошла ошибка при обработке запроса",
         "не удалось получить прогноз",
@@ -82,25 +97,43 @@ def ensure_period_number_heading(text: str, label: str, value: Any) -> str:
         normalized,
         flags=re.IGNORECASE,
     )
-    # Leave any explicit value untouched so validate_forecast can detect mismatches.
-    if existing_value:
+    # An explicit but wrong number is not silently overwritten; QA must reject it.
+    if existing_value and int(existing_value.group(1)) != int(value):
         return text
 
-    canonical = f"🎯 {str(label).capitalize()} {value}"
-    section_match = re.search(
-        r"(?m)^[ \t]*[🎯🔢]\ufe0f?[^\n]*(?:\n(?![ \t]*✨).*)*",
-        text,
-    )
-    if section_match:
-        lines = section_match.group(0).splitlines()
-        first_line = re.sub(r"^[ \t]*[🎯🔢]\ufe0f?\s*", "", lines[0]).strip()
-        remaining = lines[1:]
-        new_lines = [canonical, first_line, *remaining] if first_line else [canonical, *remaining]
-        fixed_block = "\n".join(new_lines)
-        return text[:section_match.start()] + fixed_block + text[section_match.end():]
+    meaning = _NUMBER_MEANINGS.get(int(value), "Используйте это число как символический повод для размышления, а не как гарантированный прогноз.")
+    if label.lower() == "число месяца":
+        scope = "Это общий символический ориентир календарного месяца, а не ваше число жизненного пути."
+    elif label.lower() == "число недели":
+        scope = "Это символический ориентир выбранного периода, а не ваше число жизненного пути."
+    elif label.lower() == "личный день":
+        scope = "Это нумерологическая интерпретация личного дня, а не предсказание неизбежных событий."
+    else:
+        scope = "Воспринимайте это как символическую интерпретацию, а не научно установленный прогноз."
 
-    if "✨" in text:
-        return text.replace("✨", canonical + "\n\n✨", 1)
+    canonical = f"🎯 {str(label).capitalize()} {value}\n{meaning} {scope}"
+
+    # Replace the model's entire number section: it cannot leave behind a confusing
+    # heading such as 'what is this number?' or a contradictory interpretation.
+    lines = text.splitlines()
+    start_line = None
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*[🎯🔢]\ufe0f?\s*", line):
+            start_line = i
+            break
+
+    if start_line is not None:
+        end_line = start_line + 1
+        while end_line < len(lines) and not re.match(r"^\s*✨", lines[end_line]):
+            end_line += 1
+        lines[start_line:end_line] = canonical.splitlines()
+        return "\n".join(lines)
+
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*✨", line):
+            lines[i:i] = canonical.splitlines() + [""]
+            return "\n".join(lines)
+
     return text.rstrip() + "\n\n" + canonical
 
 
