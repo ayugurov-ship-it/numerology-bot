@@ -2396,9 +2396,11 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         number_label = "личный день"
         number_value = personal_day["personal_day"]
     else:
-        # Полный список рассчитанных событий нужен и модели, и проверке QA:
-        # иначе проверка не сможет подтвердить аспект, который был отброшен лимитом.
+        # Для QA сохраняем полный набор рассчитанных событий, чтобы проверка
+        # могла подтвердить любой упомянутый аспект или переход. В запрос к модели
+        # отправляем компактную выборку, иначе месячный контекст превышает лимит Groq TPM.
         events = build_period_sky_summary(start_str, end_str, tz_name, max_events=None)
+        prompt_events = build_period_sky_summary(start_str, end_str, tz_name, max_events=14)
         moon_positions = build_period_moon_signs(start_str, end_str, tz_name)
         plan = {
             "period": h_type,
@@ -2409,13 +2411,24 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
             "moon_positions": moon_positions,
             "source": "Swiss Ephemeris / Moshier fallback",
         }
-        event_lines = "\n".join(f"- {e['date']}: {e['text']}" for e in events)
-        moon_lines = "\n".join(f"- {date}: Луна в {sign} в 12:00 по {tz_name}" for date, sign in moon_positions.items())
+        event_lines = "\n".join(f"- {e['date']}: {e['text']}" for e in prompt_events)
+        # Лунные позиции для промпта сокращаем до одного ориентира примерно
+        # на каждые три дня; полный ежедневный список остаётся в plan для QA.
+        moon_items = list(moon_positions.items())
+        moon_step = max(1, (len(moon_items) + 9) // 10)
+        sampled_moon_positions = moon_items[::moon_step]
+        if moon_items and moon_items[-1] not in sampled_moon_positions:
+            sampled_moon_positions.append(moon_items[-1])
+        moon_lines = "\n".join(
+            f"- {date}: Луна в {sign} в 12:00 по {tz_name}"
+            for date, sign in sampled_moon_positions
+        )
         context = (
             f"РАСЧИТАННЫЕ СОБЫТИЯ ПЕРИОДА {date_description}. ИСПОЛЬЗУЙ ТОЛЬКО ИХ. "
-            "Даты в списке — даты событий; не переносить событие на другую дату.\n"
+            "Это выборка событий, равномерно распределённая по периоду; не придумывай "
+            "другие аспекты или переходы и не переноси событие на другую дату.\n"
             + (event_lines if event_lines else "- В выбранном периоде нет событий, прошедших установленный порог отбора.")
-            + "\n\nРАСЧЁТНЫЙ ЗНАК ЛУНЫ НА 12:00 КАЖДОГО ДНЯ (это положение, не аспект):\n"
+            + "\n\nРАСЧЁТНЫЙ ЗНАК ЛУНЫ В ОПОРНЫЕ ДАТЫ (положение на 12:00, не аспект):\n"
             + moon_lines
         )
         if h_type == "week":
