@@ -148,12 +148,7 @@ def remove_unverified_position_sentences(
     text: str,
     plan: dict[str, Any],
 ) -> tuple[str, list[str]]:
-    """Remove only sentences whose explicit planet-sign claim contradicts the calculated plan.
-
-    This is a safety fallback after a failed model repair. It never rewrites a
-    wrong sign into a different sign; the contradicted sentence is removed, and
-    the caller must rerun the full validator on the remaining forecast.
-    """
+    """Remove sentences with explicit planet-sign claims that contradict the plan."""
     positions = plan.get("positions", {})
     if not positions or not text:
         return text, []
@@ -163,26 +158,24 @@ def remove_unverified_position_sentences(
             actual = positions.get(planet, {}).get("sign")
             if not actual:
                 continue
-            pattern = rf"\b(?:{planet_pattern})[^.!?\n]{0,60}\bв\s+({_SIGN_FORM_PATTERN})\b"
+            # Keep this rule aligned with validate_forecast's position validator.
+            pattern = rf"\b(?:{planet_pattern})[^.!?]{{0,45}}\bв\s+({_SIGN_FORM_PATTERN})\b"
             for match in re.finditer(pattern, sentence, flags=re.IGNORECASE):
                 claimed = _SIGN_TO_CANONICAL.get(match.group(1).lower(), match.group(1))
                 if claimed.lower() != str(actual).lower():
                     return True
         return False
 
-    # Split at sentence boundaries while preserving whitespace and line breaks.
-    parts = re.split(r"(?<=[.!?])(\s+)", text)
-    kept: list[str] = []
+    cleaned = text
     removed: list[str] = []
-    for index in range(0, len(parts), 2):
-        sentence = parts[index]
-        separator = parts[index + 1] if index + 1 < len(parts) else ""
+    # Use the same sentence splitter as the validator to avoid boundary mismatches.
+    for sentence in _sentences(text):
         if has_wrong_position(sentence):
-            removed.append(sentence.strip())
-            continue
-        kept.append(sentence + separator)
+            removed.append(sentence)
+            cleaned = cleaned.replace(sentence, "", 1)
 
-    cleaned = "".join(kept)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" *\n *", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, removed
 
