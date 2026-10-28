@@ -4,6 +4,7 @@ from agents.forecast_qa import (
     ensure_period_number_heading,
     validate_forecast,
     remove_unverified_position_sentences,
+    remove_unverified_lunar_position_sentences,
 )
 
 
@@ -108,6 +109,41 @@ class ForecastNumberHeadingTests(unittest.TestCase):
         self.assertIn("Полезно сначала проверить факты", cleaned)
         result = validate_forecast(cleaned, plan, "today")
         self.assertTrue(result["pass"], result["issues"])
+
+    def test_late_moon_sign_sentence_is_removed_but_other_text_is_preserved(self):
+        plan = {
+            "period": "month",
+            "date": "01.11.2026 – 30.11.2026",
+            "events": [
+                {"date": "05.11.2026", "type": "переход", "text": "Луна: Дева → Весы в 17:38"},
+            ],
+            "moon_positions": {"05.11.2026": "Дева"},
+        }
+        text = (
+            "🌟 В начале месяца важно расставить приоритеты. "
+            "05 ноября Луна находится в Весах, поэтому день располагает к переговорам. "
+            "В работе полезно заранее согласовать сроки."
+        )
+        cleaned, removed = remove_unverified_lunar_position_sentences(text, plan, "month")
+        self.assertEqual(len(removed), 1)
+        self.assertNotIn("Луна находится в Весах", cleaned)
+        self.assertIn("В работе полезно заранее согласовать сроки", cleaned)
+        result = validate_forecast(cleaned, plan, "month")
+        self.assertTrue(result["pass"], result["issues"])
+
+    def test_explicit_lunar_transition_with_time_is_not_removed(self):
+        plan = {
+            "period": "month",
+            "date": "01.11.2026 – 30.11.2026",
+            "events": [
+                {"date": "05.11.2026", "type": "переход", "text": "Луна: Дева → Весы в 17:38"},
+            ],
+            "moon_positions": {"05.11.2026": "Дева"},
+        }
+        text = "05 ноября в 17:38 Луна переходит из Девы в Весы."
+        cleaned, removed = remove_unverified_lunar_position_sentences(text, plan, "month")
+        self.assertEqual(removed, [])
+        self.assertEqual(cleaned, text)
 
     def test_correct_planet_position_is_preserved(self):
         plan = {
