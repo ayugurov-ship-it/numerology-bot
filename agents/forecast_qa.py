@@ -148,11 +148,11 @@ def remove_unverified_position_sentences(
     text: str,
     plan: dict[str, Any],
 ) -> tuple[str, list[str]]:
-    """Удаляет только предложения с положениями планет, противоречащими расчётам.
+    """Remove only sentences whose explicit planet-sign claim contradicts the calculated plan.
 
-    Это страховочный шаг после неудачного LLM-исправления. Он не подменяет знак
-    автоматически и не меняет сам расчёт: неподтверждённое утверждение удаляется,
-    после чего весь оставшийся прогноз обязательно проходит validate_forecast снова.
+    This is a safety fallback after a failed model repair. It never rewrites a
+    wrong sign into a different sign; the contradicted sentence is removed, and
+    the caller must rerun the full validator on the remaining forecast.
     """
     positions = plan.get("positions", {})
     if not positions or not text:
@@ -163,15 +163,15 @@ def remove_unverified_position_sentences(
             actual = positions.get(planet, {}).get("sign")
             if not actual:
                 continue
-            pattern = rf"\b(?:{planet_pattern})[^.!?\\n]{{0,60}}\bв\s+({_SIGN_FORM_PATTERN})\b"
+            pattern = rf"\b(?:{planet_pattern})[^.!?\n]{0,60}\bв\s+({_SIGN_FORM_PATTERN})\b"
             for match in re.finditer(pattern, sentence, flags=re.IGNORECASE):
                 claimed = _SIGN_TO_CANONICAL.get(match.group(1).lower(), match.group(1))
                 if claimed.lower() != str(actual).lower():
                     return True
         return False
 
-    # Разделяем по границе предложения, сохраняя пробелы и переводы строк.
-    parts = re.split(r"(?<=[.!?])(\\s+)", text)
+    # Split at sentence boundaries while preserving whitespace and line breaks.
+    parts = re.split(r"(?<=[.!?])(\s+)", text)
     kept: list[str] = []
     removed: list[str] = []
     for index in range(0, len(parts), 2):
@@ -183,9 +183,8 @@ def remove_unverified_position_sentences(
         kept.append(sentence + separator)
 
     cleaned = "".join(kept)
-    cleaned = re.sub(r"\\n{3,}", "\\n\\n", cleaned).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, removed
-
 
 def _mentioned_planets(text: str) -> list[str]:
     return [
