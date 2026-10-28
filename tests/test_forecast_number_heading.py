@@ -1,6 +1,10 @@
 import unittest
 
-from agents.forecast_qa import ensure_period_number_heading, validate_forecast
+from agents.forecast_qa import (
+    ensure_period_number_heading,
+    validate_forecast,
+    remove_unverified_position_sentences,
+)
 
 
 class ForecastNumberHeadingTests(unittest.TestCase):
@@ -82,6 +86,41 @@ class ForecastNumberHeadingTests(unittest.TestCase):
         result = validate_forecast(text, plan, "month")
         self.assertFalse(result["pass"])
         self.assertTrue(any("Неподтверждённый переход Луны" in issue for issue in result["issues"]))
+
+
+
+    def test_false_planet_position_sentence_is_removed_and_revalidated(self):
+        plan = {
+            "period": "today",
+            "date": "28.10.2026",
+            "positions": {"Солнце": {"sign": "Скорпион"}},
+            "events": [],
+            "moon_positions": {},
+        }
+        text = (
+            "🌅 Главная тема дня — действовать последовательно. "
+            "Солнце находится в Льве и усиливает желание спорить. "
+            "Полезно сначала проверить факты, а затем принимать решение."
+        )
+        cleaned, removed = remove_unverified_position_sentences(text, plan)
+        self.assertEqual(len(removed), 1)
+        self.assertNotIn("Солнце находится в Льве", cleaned)
+        self.assertIn("Полезно сначала проверить факты", cleaned)
+        result = validate_forecast(cleaned, plan, "today")
+        self.assertTrue(result["pass"], result["issues"])
+
+    def test_correct_planet_position_is_preserved(self):
+        plan = {
+            "period": "today",
+            "date": "28.10.2026",
+            "positions": {"Солнце": {"sign": "Скорпион"}},
+            "events": [],
+            "moon_positions": {},
+        }
+        text = "Солнце находится в Скорпионе. Сосредоточьтесь на главном."
+        cleaned, removed = remove_unverified_position_sentences(text, plan)
+        self.assertEqual(removed, [])
+        self.assertEqual(cleaned, text)
 
 
 if __name__ == "__main__":
