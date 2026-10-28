@@ -390,6 +390,18 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
     # 2. Проверяем явные положения планет по дневному расчёту.
     positions = plan.get("positions", {})
     for sentence in _sentences(text):
+        # Описания последовательности переходов проверяются отдельным блоком ниже.
+        # Иначе фраза «Луна движется из X через Y в Z» ошибочно воспринимается
+        # как утверждение, что все знаки относятся к одной дате.
+        is_transition_description = (
+            re.search(r"\bлун\w*\b", sentence, flags=re.IGNORECASE)
+            and re.search(
+                r"переход|переходит|меняет знак|меняет знаки|движется|затем в",
+                sentence, flags=re.IGNORECASE,
+            )
+        )
+        if is_transition_description:
+            continue
         for planet, planet_pattern in _PLANET_PATTERNS.items():
             pattern = rf"\b(?:{planet_pattern})[^.!?]{{0,45}}\bв\s+({_SIGN_FORM_PATTERN})\b"
             match = re.search(pattern, sentence, flags=re.IGNORECASE)
@@ -519,7 +531,21 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
                         date_match = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", raw_date)
                         if date_match:
                             candidate_dates.add(date(int(date_match.group(3)), int(date_match.group(2)), int(date_match.group(1))))
-                if candidate_dates and not candidate_dates.intersection(constraint):
+                starts_from_date = bool(re.search(
+                    rf"\bс\s+\d{{1,2}}\s+(?:{'|'.join(_MONTHS)})\b",
+                    sentence, flags=re.IGNORECASE,
+                ))
+                if starts_from_date:
+                    # «С 10 ноября Луна ... затем в Водолее» задаёт начало
+                    # последовательности, а не требует всех переходов 10 ноября.
+                    first_constraint = min(constraint)
+                    valid_after_start = {
+                        event_date for event_date in candidate_dates
+                        if first_constraint <= event_date <= last
+                    }
+                    if candidate_dates and not valid_after_start:
+                        issues.append(f"Переход Луны не подтверждён после указанной даты: {sentence[:160]}")
+                elif candidate_dates and not candidate_dates.intersection(constraint):
                     issues.append(f"Переход Луны указан не на ту дату: {sentence[:160]}")
 
         # Отлавливаем явно обратную последовательность знаков Луны (например, Лев → Рак).
