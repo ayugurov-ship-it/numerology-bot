@@ -144,6 +144,49 @@ def _sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
 
 
+def remove_unverified_position_sentences(
+    text: str,
+    plan: dict[str, Any],
+) -> tuple[str, list[str]]:
+    """Удаляет только предложения с положениями планет, противоречащими расчётам.
+
+    Это страховочный шаг после неудачного LLM-исправления. Он не подменяет знак
+    автоматически и не меняет сам расчёт: неподтверждённое утверждение удаляется,
+    после чего весь оставшийся прогноз обязательно проходит validate_forecast снова.
+    """
+    positions = plan.get("positions", {})
+    if not positions or not text:
+        return text, []
+
+    def has_wrong_position(sentence: str) -> bool:
+        for planet, planet_pattern in _PLANET_PATTERNS.items():
+            actual = positions.get(planet, {}).get("sign")
+            if not actual:
+                continue
+            pattern = rf"\b(?:{planet_pattern})[^.!?\\n]{{0,60}}\bв\s+({_SIGN_FORM_PATTERN})\b"
+            for match in re.finditer(pattern, sentence, flags=re.IGNORECASE):
+                claimed = _SIGN_TO_CANONICAL.get(match.group(1).lower(), match.group(1))
+                if claimed.lower() != str(actual).lower():
+                    return True
+        return False
+
+    # Разделяем по границе предложения, сохраняя пробелы и переводы строк.
+    parts = re.split(r"(?<=[.!?])(\\s+)", text)
+    kept: list[str] = []
+    removed: list[str] = []
+    for index in range(0, len(parts), 2):
+        sentence = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        if has_wrong_position(sentence):
+            removed.append(sentence.strip())
+            continue
+        kept.append(sentence + separator)
+
+    cleaned = "".join(kept)
+    cleaned = re.sub(r"\\n{3,}", "\\n\\n", cleaned).strip()
+    return cleaned, removed
+
+
 def _mentioned_planets(text: str) -> list[str]:
     return [
         planet for planet, pattern in _PLANET_PATTERNS.items()
