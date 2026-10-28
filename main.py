@@ -2400,7 +2400,21 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         # могла подтвердить любой упомянутый аспект или переход. В запрос к модели
         # отправляем компактную выборку, иначе месячный контекст превышает лимит Groq TPM.
         events = build_period_sky_summary(start_str, end_str, tz_name, max_events=None)
-        prompt_events = build_period_sky_summary(start_str, end_str, tz_name, max_events=14)
+        # Выбираем не более 14 событийных дат равномерно по месяцу,
+        # не пересчитывая эфемериды второй раз.
+        events_by_date: dict[str, list[dict[str, Any]]] = {}
+        for event in events:
+            events_by_date.setdefault(event["date"], []).append(event)
+        event_dates = sorted(events_by_date)
+        if len(event_dates) <= 14:
+            selected_event_dates = event_dates
+        else:
+            indexes = [round(i * (len(event_dates) - 1) / 13) for i in range(14)]
+            selected_event_dates = [event_dates[index] for index in indexes]
+        prompt_events = [
+            events_by_date[event_date][0]
+            for event_date in selected_event_dates
+        ]
         moon_positions = build_period_moon_signs(start_str, end_str, tz_name)
         plan = {
             "period": h_type,
