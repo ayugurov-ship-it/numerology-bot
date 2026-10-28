@@ -53,5 +53,36 @@ class ForecastNumberHeadingTests(unittest.TestCase):
         self.assertTrue(result["pass"], result["issues"])
 
 
+
+    def test_month_moon_sequence_checks_transitions_after_start_date(self):
+        plan = {
+            "period": "month",
+            "date": "01.11.2026 – 30.11.2026",
+            "events": [
+                {"date": "10.11.2026", "type": "переход", "text": "Луна: Стрелец → Козерог в 13:00"},
+                {"date": "11.11.2026", "type": "переход", "text": "Луна: Козерог → Водолей в 14:00"},
+            ],
+            "moon_positions": {"10.11.2026": "Стрелец", "11.11.2026": "Козерог"},
+        }
+        text = "🌙 С 10 ноября Луна перемещается из Стрельца в Козерога, затем в Водолея."
+        result = validate_forecast(text, plan, "month")
+        transition_issues = [issue for issue in result["issues"] if "Переход Луны" in issue or "Неподтверждённый переход Луны" in issue]
+        self.assertEqual(transition_issues, [])
+
+    def test_wrong_moon_sequence_still_fails(self):
+        plan = {
+            "period": "month",
+            "date": "01.11.2026 – 30.11.2026",
+            "events": [
+                {"date": "10.11.2026", "type": "переход", "text": "Луна: Стрелец → Козерог в 13:00"},
+            ],
+            "moon_positions": {"10.11.2026": "Стрелец"},
+        }
+        text = "🌙 С 10 ноября Луна перемещается из Стрельца в Водолея."
+        result = validate_forecast(text, plan, "month")
+        self.assertFalse(result["pass"])
+        self.assertTrue(any("Неподтверждённый переход Луны" in issue for issue in result["issues"]))
+
+
 if __name__ == "__main__":
     unittest.main()
