@@ -688,3 +688,35 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
         "checked_aspects": len(aspect_records),
         "period": period,
     }
+
+
+
+def remove_unverified_lunar_position_sentences(
+    text: str,
+    plan: dict[str, Any],
+    period: str,
+) -> tuple[str, list[str]]:
+    """Remove only dated lunar-position sentences that fail the existing QA rule.
+
+    This is a conservative recovery path: it reuses validate_forecast as the source
+    of truth and never changes calculations or relaxes validation.
+    """
+    if not text:
+        return text, []
+
+    cleaned = text
+    removed: list[str] = []
+    for sentence in _sentences(text):
+        result = validate_forecast(sentence, plan, period)
+        lunar_timing_issues = [
+            issue for issue in result["issues"]
+            if issue.startswith("Луна входит в знак") and "укажи время перехода" in issue
+        ]
+        if lunar_timing_issues:
+            removed.append(sentence)
+            cleaned = cleaned.replace(sentence, "", 1)
+
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" *\n *", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, removed
