@@ -40,6 +40,7 @@ from agents.forecast_qa import (
     ensure_period_number_heading,
     remove_unverified_position_sentences,
     remove_unverified_lunar_position_sentences,
+    remove_unverified_lunar_sequence_sentences,
 )
 from payments.crypto_pay import create_test_invoice, get_invoice, get_me, CryptoPayError
 
@@ -2669,7 +2670,10 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                 cleaned, removed_lunar = remove_unverified_lunar_position_sentences(
                     cleaned, plan, h_type
                 )
-                removed_claims = removed_positions + removed_lunar
+                cleaned, removed_lunar_sequences = remove_unverified_lunar_sequence_sentences(
+                    cleaned, plan, h_type
+                )
+                removed_claims = removed_positions + removed_lunar + removed_lunar_sequences
                 cleaned_qa = validate_forecast(cleaned, plan, h_type) if removed_claims else repaired_qa
                 if removed_claims and cleaned_qa["pass"]:
                     response = cleaned
