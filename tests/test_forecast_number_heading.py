@@ -131,6 +131,29 @@ class ForecastNumberHeadingTests(unittest.TestCase):
         result = validate_forecast(cleaned, plan, "month")
         self.assertTrue(result["pass"], result["issues"])
 
+
+    def test_reverse_lunar_sequence_sentence_is_removed_and_revalidated(self):
+        plan = {
+            "period": "month",
+            "date": "01.11.2026 – 30.11.2026",
+            "events": [
+                {"date": "05.11.2026", "type": "переход", "text": "Луна: Дева → Весы в 17:38"},
+            ],
+            "moon_positions": {"05.11.2026": "Дева"},
+        }
+        text = (
+            "🌟 В ноябре уделите внимание отношениям. "
+            "В 2026, когда Луна в Весах и затем в Раке, уделите время слушанию партнёра. "
+            "Планируйте важные разговоры заранее."
+        )
+        cleaned, removed = remove_unverified_lunar_sequence_sentences(text, plan, "month")
+        self.assertEqual(len(removed), 1)
+        self.assertNotIn("Луна в Весах и затем в Раке", cleaned)
+        self.assertIn("Планируйте важные разговоры заранее", cleaned)
+        result = validate_forecast(cleaned, plan, "month")
+        self.assertTrue(result["pass"], result["issues"])
+
+
     def test_explicit_lunar_transition_with_time_is_not_removed(self):
         plan = {
             "period": "month",
