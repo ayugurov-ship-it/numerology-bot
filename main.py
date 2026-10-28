@@ -2719,10 +2719,14 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         "января", "февраля", "марта", "апреля", "мая", "июня",
         "июля", "августа", "сентября", "октября", "ноября", "декабря",
     )
+    month_names_nominative = (
+        "январь", "февраль", "март", "апрель", "май", "июнь",
+        "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+    )
     if start == end:
         period_heading = f"📅 Прогноз на {period_display} — {start.day} {month_names[start.month - 1]} {start.year} года"
     elif h_type == "month" and start.day == 1 and end.day == calendar.monthrange(end.year, end.month)[1]:
-        period_heading = f"📅 Прогноз на {month_names[start.month - 1]} {start.year} года"
+        period_heading = f"📅 Прогноз на {month_names_nominative[start.month - 1]} {start.year} года"
         period_heading += f" ({start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')})"
     else:
         period_heading = (
