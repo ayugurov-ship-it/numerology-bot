@@ -396,7 +396,7 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
         is_transition_description = (
             re.search(r"\bлун\w*\b", sentence, flags=re.IGNORECASE)
             and re.search(
-                r"переход|переходит|меняет знак|меняет знаки|движется|затем в",
+                r"переход|переходит|перемещается|меняет знак|меняет знаки|движется|затем в",
                 sentence, flags=re.IGNORECASE,
             )
         )
@@ -503,7 +503,7 @@ def validate_forecast(text: str, plan: dict[str, Any], period: str) -> dict[str,
         lower = sentence.lower()
         if not re.search(r"\bлун\w*\b", lower):
             continue
-        if not re.search(r"переход|переходит|меняет знак|меняет знаки|движется|затем в", lower):
+        if not re.search(r"переход|переходит|перемещается|меняет знак|меняет знаки|движется|затем в", lower):
             continue
 
         pair_pattern = rf"\b(?:с|со|из)\s+({_SIGN_FORM_PATTERN})\s+в\s+({_SIGN_FORM_PATTERN})\b"
