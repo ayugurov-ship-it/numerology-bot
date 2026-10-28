@@ -39,6 +39,7 @@ from agents.forecast_qa import (
     validate_forecast,
     ensure_period_number_heading,
     remove_unverified_position_sentences,
+    remove_unverified_lunar_position_sentences,
 )
 from payments.crypto_pay import create_test_invoice, get_invoice, get_me, CryptoPayError
 
@@ -2662,9 +2663,13 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                 response = repaired
                 logger.info("FORECAST QA PASS after repair: period=%s", h_type)
             else:
-                # Last deterministic safeguard: never accept a false planet-sign claim.
-                # Remove the contradictory sentence, then rerun every validator.
-                cleaned, removed_claims = remove_unverified_position_sentences(repaired, plan)
+                # Last deterministic safeguard: remove only sentences rejected by
+                # explicit factual checks, then rerun the complete validator.
+                cleaned, removed_positions = remove_unverified_position_sentences(repaired, plan)
+                cleaned, removed_lunar = remove_unverified_lunar_position_sentences(
+                    cleaned, plan, h_type
+                )
+                removed_claims = removed_positions + removed_lunar
                 cleaned_qa = validate_forecast(cleaned, plan, h_type) if removed_claims else repaired_qa
                 if removed_claims and cleaned_qa["pass"]:
                     response = cleaned
@@ -2717,7 +2722,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
     if start == end:
         period_heading = f"📅 Прогноз на {period_display} — {start.day} {month_names[start.month - 1]} {start.year} года"
     elif h_type == "month" and start.day == 1 and end.day == calendar.monthrange(end.year, end.month)[1]:
-        period_heading = f"📅 Прогноз на {month_names[start.month - 1].capitalize()} {start.year} года"
+        period_heading = f"📅 Прогноз на {month_names[start.month - 1]} {start.year} года"
         period_heading += f" ({start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')})"
     else:
         period_heading = (
