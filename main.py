@@ -2637,6 +2637,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
         repair_prompt = f"""
 Исправьте прогноз, устранив ВСЕ ошибки проверки ниже. Не переписывайте текст целиком без необходимости.
 Используйте только расчётные данные и не добавляйте новые астрологические факты.
+Если упомянуто положение планеты в знаке, сверяйтесь с точной строкой расчёта. Не повторяйте ни одно утверждение, указанное в ошибках QA.
 РАСЧЁТНЫЕ ДАННЫЕ:
 {context}
 
@@ -2659,8 +2660,7 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                 logger.info("FORECAST QA PASS after repair: period=%s", h_type)
             else:
                 # Last deterministic safeguard: never accept a false planet-sign claim.
-                # If a repaired draft still contains one, remove the entire bad sentence,
-                # then rerun every validator against the remaining text.
+                # Remove the contradictory sentence, then rerun every validator.
                 cleaned, removed_claims = remove_unverified_position_sentences(repaired, plan)
                 cleaned_qa = validate_forecast(cleaned, plan, h_type) if removed_claims else repaired_qa
                 if removed_claims and cleaned_qa["pass"]:
@@ -2676,17 +2676,17 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                         h_type, final_qa["issues"], removed_claims
                     )
                     issue_text = " ".join(str(issue).lower() for issue in final_qa["issues"])
-                diagnostic_categories = []
-                if "дат" in issue_text or "период" in issue_text:
-                    diagnostic_categories.append("даты/границы периода")
-                if "аспект" in issue_text or "пара планет" in issue_text:
-                    diagnostic_categories.append("астрологические аспекты")
-                if "луны" in issue_text or "переход" in issue_text or "знак луны" in issue_text:
-                    diagnostic_categories.append("положение и переходы Луны")
-                if "число" in issue_text or "нумеролог" in issue_text:
-                    diagnostic_categories.append("нумерологические значения")
-                if not diagnostic_categories:
-                    diagnostic_categories.append("логическая согласованность текста")
+                    diagnostic_categories = []
+                    if "дат" in issue_text or "период" in issue_text:
+                        diagnostic_categories.append("даты/границы периода")
+                    if "аспект" in issue_text or "пара планет" in issue_text:
+                        diagnostic_categories.append("астрологические аспекты")
+                    if "луны" in issue_text or "переход" in issue_text or "знак луны" in issue_text:
+                        diagnostic_categories.append("положение и переходы Луны")
+                    if "число" in issue_text or "нумеролог" in issue_text:
+                        diagnostic_categories.append("нумерологические значения")
+                    if not diagnostic_categories:
+                        diagnostic_categories.append("логическая согласованность текста")
                     issue_details = "; ".join(
                         str(issue)[:180] for issue in final_qa["issues"][:2]
                     )
