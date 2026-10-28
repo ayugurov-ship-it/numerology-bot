@@ -35,7 +35,11 @@ from agents.forecast_engine import (
     build_period_moon_signs,
 )
 from agents.forecast_agent import build_forecast_plan, render_forecast_context
-from agents.forecast_qa import validate_forecast, ensure_period_number_heading
+from agents.forecast_qa import (
+    validate_forecast,
+    ensure_period_number_heading,
+    remove_unverified_position_sentences,
+)
 from payments.crypto_pay import create_test_invoice, get_invoice, get_me, CryptoPayError
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
@@ -2654,11 +2658,24 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                 response = repaired
                 logger.info("FORECAST QA PASS after repair: period=%s", h_type)
             else:
-                logger.error(
-                    "FORECAST QA FAIL after repair: period=%s issues=%s",
-                    h_type, repaired_qa["issues"]
-                )
-                issue_text = " ".join(str(issue).lower() for issue in repaired_qa["issues"])
+                # Last deterministic safeguard: never accept a false planet-sign claim.
+                # If a repaired draft still contains one, remove the entire bad sentence,
+                # then rerun every validator against the remaining text.
+                cleaned, removed_claims = remove_unverified_position_sentences(repaired, plan)
+                cleaned_qa = validate_forecast(cleaned, plan, h_type) if removed_claims else repaired_qa
+                if removed_claims and cleaned_qa["pass"]:
+                    response = cleaned
+                    logger.warning(
+                        "FORECAST QA PASS after deterministic cleanup: period=%s removed_claims=%s",
+                        h_type, removed_claims
+                    )
+                else:
+                    final_qa = cleaned_qa if removed_claims else repaired_qa
+                    logger.error(
+                        "FORECAST QA FAIL after repair/cleanup: period=%s issues=%s removed_claims=%s",
+                        h_type, final_qa["issues"], removed_claims
+                    )
+                    issue_text = " ".join(str(issue).lower() for issue in final_qa["issues"])
                 diagnostic_categories = []
                 if "дат" in issue_text or "период" in issue_text:
                     diagnostic_categories.append("даты/границы периода")
@@ -2670,16 +2687,16 @@ async def horoscope_handler(m: Message, date_str: str, last_action: str):
                     diagnostic_categories.append("нумерологические значения")
                 if not diagnostic_categories:
                     diagnostic_categories.append("логическая согласованность текста")
-                issue_details = "; ".join(
-                    str(issue)[:180] for issue in repaired_qa["issues"][:2]
-                )
-                response = (
-                    "⚠️ Не удалось надёжно проверить этот прогноз, поэтому я не буду отправлять "
-                    "непроверенный текст.\n"
-                    "Что не прошло проверку: " + ", ".join(diagnostic_categories) + ".\n"
-                    "Подробности: " + issue_details + ". "
-                    "Попробуйте сформировать прогноз ещё раз позже."
-                )
+                    issue_details = "; ".join(
+                        str(issue)[:180] for issue in final_qa["issues"][:2]
+                    )
+                    response = (
+                        "⚠️ Не удалось надёжно проверить этот прогноз, поэтому я не буду отправлять "
+                        "непроверенный текст.\n"
+                        "Что не прошло проверку: " + ", ".join(diagnostic_categories) + ".\n"
+                        "Подробности: " + issue_details + ". "
+                        "Попробуйте сформировать прогноз ещё раз позже."
+                    )
         except Exception:
             logger.exception("FORECAST repair failed; suppressing unverified response")
             response = (
