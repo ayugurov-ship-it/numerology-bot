@@ -789,6 +789,7 @@ async def generate_ai_affirmation(date_str: str, life_number: int, target_date_s
 
 def main_menu(user_id: int = None):
     keyboard = [
+        [KeyboardButton(text="🏠 Главное меню")],
         [KeyboardButton(text="🔮 Мой профиль")],
         [KeyboardButton(text="🔮 Гороскоп"), KeyboardButton(text="🔢 Нумерология")],
         [KeyboardButton(text="💞 Совместимость")],
@@ -1977,6 +1978,24 @@ async def back_to_main(m: Message):
     user_id = m.from_user.id
     await m.answer(
         "Возвращаемся в главное меню:",
+        reply_markup=main_menu(user_id)
+    )
+
+@router.message(lambda m: m.text == "🏠 Главное меню")
+async def show_main_menu(m: Message):
+    user_id = m.from_user.id
+    await m.answer(
+        "🏠 <b>Главное меню</b>\nВыберите нужный раздел:",
+        parse_mode="HTML",
+        reply_markup=main_menu(user_id)
+    )
+
+@router.message(Command("menu"))
+async def menu_command(m: Message):
+    user_id = m.from_user.id
+    await m.answer(
+        "🏠 <b>Главное меню</b>\nВыберите нужный раздел:",
+        parse_mode="HTML",
         reply_markup=main_menu(user_id)
     )
 
